@@ -1,12 +1,16 @@
 import os
 import threading
+import urllib.error
+import urllib.request
 
 import pytest
 from fake_lens import FakeLens
 
+from openclips import constants as C
 from openclips.camera import Camera
 from openclips.catalog import Catalog
-from openclips.errors import CameraError, WifiError
+from openclips.errors import CameraError, HttpError, WifiError
+from openclips.jpeg import structural_jpeg, validate_jpeg
 from openclips.sync import (
     STAGE_DONE,
     STAGE_DOWNLOAD,
@@ -40,7 +44,7 @@ class RecordingWifi:
 
 def fake_http(url, path, body, timeout=30.0):
     assert path == "/fetch_moment"
-    return b"\xff\xd8\xff\xe0" + body
+    return b"wrap" + structural_jpeg()
 
 
 @pytest.fixture
@@ -124,10 +128,10 @@ def test_http_failure_is_reported_not_raised(cam, tmp_path, monkeypatch):
     def flaky(url, path, body, timeout=30.0):
         calls["n"] += 1
         if calls["n"] == 2:
-            raise CameraError("HTTP 500 on /fetch_moment: Moment could not be opened")
+            raise HttpError("/fetch_moment", status=500, retryable=False)
         if calls["n"] == 3:
             return b"not a jpeg"
-        return b"\xff\xd8\xff\xe0ok"
+        return structural_jpeg()
 
     monkeypatch.setattr(Camera, "http_post", staticmethod(flaky))
     stages = []
@@ -164,3 +168,163 @@ def test_custom_path_layout(cam, tmp_path):
 
     result = Syncer(cam, tmp_path, NullWifi(), path_for=by_time).sync(session_id=SID)
     assert result.ok and (tmp_path / "2026-09-19" / "2.jpg").exists()
+
+
+def test_listing_error_does_not_hide_other_session(cam, tmp_path, monkeypatch):
+    orig = Camera.moments
+
+    def maybe(self, session_id, timeout=20.0):
+        if session_id == SID:
+            raise CameraError("LIST_MOMENTS")
+        return orig(self, session_id, timeout)
+
+    monkeypatch.setattr(Camera, "moments", maybe)
+    plan = Syncer(cam, tmp_path, NullWifi()).plan(all_sessions=True)
+    assert plan.listing_errors and OLD in plan.sessions_seen
+    assert any(i.moment_id == 7 for i in plan.items)
+    result = Syncer(cam, tmp_path, NullWifi()).run(plan)
+    assert result.listing_errors and not result.ok
+
+
+def test_listing_error_is_not_nothing_new(cam, tmp_path, monkeypatch):
+    def boom(self, session_id, timeout=20.0):
+        raise CameraError("LIST_MOMENTS")
+
+    monkeypatch.setattr(Camera, "moments", boom)
+    plan = Syncer(cam, tmp_path, NullWifi()).plan(all_sessions=True)
+    assert plan.listing_errors and not plan.items
+    result = Syncer(cam, tmp_path, NullWifi()).run(plan)
+    assert not result.ok and result.listing_errors
+    assert result.downloaded == []
+
+
+def test_truncated_and_orphan_files(cam, tmp_path):
+    jpeg = structural_jpeg()
+    dest = tmp_path / str(SID) / "moment_2.jpg"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(jpeg[:20])
+    plan = Syncer(cam, tmp_path, NullWifi()).plan(session_id=SID)
+    assert any(i.moment_id == 2 for i in plan.items)
+
+    dest.write_bytes(jpeg)
+    s = Syncer(cam, tmp_path, NullWifi())
+    plan = s.plan(session_id=SID)
+    assert 2 not in [i.moment_id for i in plan.items]
+    assert Catalog.for_dir(tmp_path).has(SID, 2)
+
+
+def test_catalog_wrong_size_and_wrong_path_are_planned(cam, tmp_path):
+    jpeg = structural_jpeg()
+    dest = tmp_path / str(SID) / "moment_2.jpg"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(jpeg)
+    cat = Catalog.for_dir(tmp_path)
+    cat.record(SID, 2, dest, size=999)
+    cat.save()
+    plan = Syncer(cam, tmp_path, NullWifi()).plan(session_id=SID)
+    assert any(i.moment_id == 2 for i in plan.items)
+
+    other = tmp_path / "other.jpg"
+    other.write_bytes(jpeg)
+    cat.record(SID, 3, other, size=len(jpeg))
+    cat.save()
+    wanted = tmp_path / str(SID) / "moment_3.jpg"
+    plan = Syncer(cam, tmp_path, NullWifi()).plan(session_id=SID)
+    assert any(i.path == wanted for i in plan.items)
+
+    cat.record(SID, 1, tmp_path / str(SID) / "moment_1.jpg", size=len(jpeg), resolution=C.RESOLUTION_THUMB)
+    (tmp_path / str(SID) / "moment_1.jpg").write_bytes(jpeg)
+    cat.save()
+    plan = Syncer(cam, tmp_path, NullWifi(), resolution=C.RESOLUTION_FULL).plan(session_id=SID)
+    assert any(i.moment_id == 1 for i in plan.items)
+
+
+def test_cancel_after_plan_does_not_start_wifi(cam, tmp_path):
+    wifi = RecordingWifi()
+    s = Syncer(cam, tmp_path, wifi)
+    plan = s.plan()
+    assert plan.items
+    s.cancel()
+    result = s.run(plan)
+    assert result.cancelled and not result.ok
+    assert wifi.joined == [] and wifi.left == 0
+
+
+def test_retry_stops_at_budget_permanent_not_retried(cam, tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def transient(url, path, body, timeout=30.0):
+        calls["n"] += 1
+        raise HttpError("/fetch_moment", status=503, retryable=True)
+
+    monkeypatch.setattr(Camera, "http_post", staticmethod(transient))
+    result = Syncer(cam, tmp_path, NullWifi(), http_retries=2, http_retry_backoff=0).sync(
+        session_id=SID, moment_ids=[2]
+    )
+    assert not result.ok and calls["n"] == 3
+    calls["n"] = 0
+
+    def permanent(url, path, body, timeout=30.0):
+        calls["n"] += 1
+        raise HttpError("/fetch_moment", status=500, retryable=False)
+
+    monkeypatch.setattr(Camera, "http_post", staticmethod(permanent))
+    result = Syncer(cam, tmp_path, NullWifi(), http_retries=4, http_retry_backoff=0).sync(
+        session_id=SID, moment_ids=[2]
+    )
+    assert calls["n"] == 1 and result.failed
+
+
+def test_http_error_omits_response_body(monkeypatch):
+    sentinel = "SYNTHETIC_SECRET_SENTINEL_http"
+
+    class FakeResp:
+        def read(self):
+            return sentinel.encode()
+
+    def boom(req, timeout=30.0):
+        err = urllib.error.HTTPError("http://192.168.49.10:8080/fetch_moment", 500, "err", hdrs=None, fp=None)
+        err.read = FakeResp().read
+        raise err
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(HttpError) as ei:
+        Camera.http_post("http://192.168.49.10:8080", "/fetch_moment", b"x")
+    assert ei.value.status == 500
+    assert sentinel not in str(ei.value)
+    assert "HTTP 500" in str(ei.value)
+
+
+def test_catalog_checkpoint_failure_keeps_image(cam, tmp_path, monkeypatch):
+    jpeg = structural_jpeg()
+    monkeypatch.setattr(Camera, "http_post", staticmethod(lambda *a, **k: jpeg))
+    s = Syncer(cam, tmp_path, NullWifi())
+
+    def fail_save(self):
+        raise OSError("disk")
+
+    monkeypatch.setattr(Catalog, "save", fail_save)
+    result = s.sync(session_id=SID, moment_ids=[2])
+    saved = tmp_path / str(SID) / "moment_2.jpg"
+    assert saved.exists() and validate_jpeg(saved.read_bytes())
+    assert not result.ok and result.catalog_errors
+    assert result.downloaded
+
+
+def test_cleanup_runs_after_softap_even_if_join_fails(cam, tmp_path):
+    wifi = RecordingWifi(ok=False)
+    with pytest.raises(WifiError):
+        Syncer(cam, tmp_path, wifi).sync(session_id=SID, moment_ids=[2])
+    assert wifi.left == 1 and not cam.lens.wifi_open
+
+
+def test_previous_valid_destination_survives_failed_overwrite(cam, tmp_path, monkeypatch):
+    jpeg = structural_jpeg()
+    dest = tmp_path / str(SID) / "moment_2.jpg"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(jpeg)
+    monkeypatch.setattr(Camera, "http_post", staticmethod(lambda *a, **k: b"not-a-jpeg"))
+    result = Syncer(cam, tmp_path, NullWifi(), overwrite=True).sync(session_id=SID, moment_ids=[2])
+    assert not result.ok
+    assert dest.read_bytes() == jpeg
+    assert not list(dest.parent.glob(".openclips-*.part"))

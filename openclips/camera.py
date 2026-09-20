@@ -41,6 +41,7 @@ from .errors import (
     CameraAsleep,
     CameraError,
     ConnectionLost,
+    HttpError,
     NotPaired,
     PairingKeyMismatch,
     RequestTimeout,
@@ -670,10 +671,19 @@ class Camera:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
         except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace").strip()
-            raise CameraError(f"HTTP {e.code} on {path}: {detail}") from None
-        except (urllib.error.URLError, OSError) as e:
-            raise CameraError(f"HTTP request to {path} failed: {e}") from None
+            raw = b""
+            try:
+                raw = e.read()
+            except Exception:
+                pass
+            text = raw.decode("utf-8", "replace")
+            unavailable = e.code == 500 and (
+                "moment could not be opened" in text.lower() or "moment content not present" in text.lower()
+            )
+            retryable = e.code in (502, 503, 504) and not unavailable
+            raise HttpError(path, status=e.code, retryable=retryable) from None
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise HttpError(path, retryable=True) from None
 
     def fetch_moment_http(
         self,

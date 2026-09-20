@@ -60,18 +60,28 @@ class Catalog:
         timestamp_ms: int | None = None,
         score: float | None = None,
         camera: str | None = None,
+        resolution: int | None = None,
     ) -> None:
         rel = os.path.relpath(Path(file), self.path.parent)
         sess = self._data["sessions"].setdefault(str(session_id), {"moments": {}})
         if camera:
             sess["camera"] = camera
-        sess["moments"][str(moment_id)] = {
+        entry = {
             "file": rel,
             "size": size,
             "timestamp_ms": timestamp_ms,
             "score": score,
             "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
+        if resolution is not None:
+            entry["resolution"] = resolution
+        sess["moments"][str(moment_id)] = entry
+
+    def file_path(self, session_id: int, moment_id: int) -> Path | None:
+        entry = self.get(session_id, moment_id)
+        if not entry or not entry.get("file"):
+            return None
+        return self.path.parent / entry["file"]
 
     def forget(self, session_id: int, moment_id: int) -> bool:
         sess = self._data["sessions"].get(str(session_id))

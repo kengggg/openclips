@@ -38,6 +38,8 @@ EXIT_USAGE = 2
 EXIT_CAMERA = 3
 EXIT_WIFI = 4
 EXIT_NOTHING = 5
+EXIT_PARTIAL = 6
+EXIT_INTERRUPT = 130
 
 logger = logging.getLogger("openclips.cli")
 
@@ -370,7 +372,19 @@ def cmd_sync(args) -> int:
                 plan.open_session,
             )
         if not plan.items:
-            emit(args, "nothing new to download", {"downloaded": 0, "skipped": len(plan.skipped), "out": out_root})
+            data = {
+                "downloaded": [],
+                "failed": [{"session_id": sid, "error": err} for sid, err in plan.listing_errors],
+                "skipped": len(plan.skipped),
+                "out": out_root,
+            }
+            if plan.listing_errors:
+                emit(args, "session listing failed", data)
+                return EXIT_CAMERA
+            if plan.cancelled:
+                emit(args, "cancelled", data)
+                return EXIT_INTERRUPT
+            emit(args, "nothing new to download", data)
             return EXIT_OK if plan.skipped else EXIT_NOTHING
         result = syncer.run(plan)
     data = {
@@ -378,11 +392,16 @@ def cmd_sync(args) -> int:
         "failed": [{"moment_id": i.moment_id, "error": e} for i, e in result.failed],
         "skipped": len(result.skipped),
         "out": out_root,
+        "cancelled": result.cancelled,
+        "cleanup_errors": result.cleanup_errors,
+        "catalog_errors": result.catalog_errors,
     }
     emit(args, f"downloaded {len(result.downloaded)} of {plan.total}", data)
-    if result.downloaded:
-        return EXIT_OK
-    return EXIT_WIFI if any("HTTP" not in e for _, e in result.failed) and not result.downloaded else EXIT_NOTHING
+    if result.cancelled:
+        return EXIT_INTERRUPT
+    if not result.ok:
+        return EXIT_PARTIAL if result.downloaded else EXIT_CAMERA
+    return EXIT_OK
 
 
 def cmd_forget(args) -> int:

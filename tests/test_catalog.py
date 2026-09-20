@@ -22,3 +22,17 @@ def test_roundtrip(tmp_path):
 def test_ignores_garbage_file(tmp_path):
     (tmp_path / CATALOG_NAME).write_text(json.dumps([1, 2]))
     assert Catalog.for_dir(tmp_path).sessions() == {}
+
+
+def test_reads_old_entries_without_resolution(tmp_path):
+    f = tmp_path / "1" / "moment_1.jpg"
+    f.parent.mkdir()
+    f.write_bytes(b"x")
+    cat = Catalog.for_dir(tmp_path)
+    cat.record(1, 1, f, 1)
+    cat.save()
+    loaded = Catalog.for_dir(tmp_path).get(1, 1)
+    assert loaded["size"] == 1 and "resolution" not in loaded
+    cat.record(1, 1, f, 1, resolution=1)
+    cat.save()
+    assert Catalog.for_dir(tmp_path).get(1, 1)["resolution"] == 1

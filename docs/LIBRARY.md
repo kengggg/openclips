@@ -130,13 +130,27 @@ result = syncer.run(plan)  # SoftAP, join, download, restore Wi-Fi, catalog
 
 `on_progress` receives `SyncProgress(stage, item, index, total, bytes,
 message, credentials)`; stages are the `STAGE_*` constants in
-`openclips.sync`. `syncer.cancel()` is safe from any thread and stops after
-the current file. Files land at `<out>/<session_id>/moment_<id>.jpg` by
-default; pass `path_for` to change the layout.
+`openclips.sync`. `STAGE_SAVED` means the JPEG was replaced; `STAGE_CATALOGED`
+means that file's catalog checkpoint succeeded. `syncer.cancel()` is safe
+from any thread and stops after the current file. A cancel issued after
+`plan()` is honoured by `run()` and does not start Wi-Fi. Files land at
+`<out>/<session_id>/moment_<id>.jpg` by default; pass `path_for` to change
+the layout.
+
+A file is skipped only when the requested path is a regular, structurally
+valid JPEG whose recorded size (when present) matches. Structural checks
+confirm SOI, segment lengths, SOF, SOS and EOI; they do not prove every
+pixel is decodable. Truncated or wrapped-but-invalid payloads fail that
+item. Catalog checkpoints run after each saved file; if the checkpoint
+fails the image is kept and `SyncResult.ok` is false. `ok` is also false
+when listing a session failed, a transfer/save failed, cleanup failed, or
+the run was cancelled. CLI `sync` returns nonzero for partial and failed
+runs (exit 6 when some files saved, 3 when none did).
 
 `Catalog` (`<out>/.openclips-catalog.json`) records every download with
-timestamp, score and size, so the plan skips what you already have and
-your gallery can list moments without touching the files.
+timestamp, score, size and resolution, so the plan skips what you already
+have and your gallery can list moments without touching the files. Old
+catalog entries without resolution still skip when the file is valid.
 
 Moment metadata comes from `cam.moments(session_id)` as `MomentInfo`
 objects: `timestamp_ms`, `datetime`, `score` (the camera's ranking, list is
