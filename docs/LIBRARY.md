@@ -158,6 +158,11 @@ so an unrelated SSID-named connection is never removed.
 timestamp, score, size and resolution, so the plan skips what you already
 have and your gallery can list moments without touching the files. Old
 catalog entries without resolution still skip when the file is valid.
+Malformed pairing stores and catalogs raise ``StorageError`` and are not
+silently emptied; ``Catalog.rebuild()`` moves an invalid catalog aside.
+Saves use a 0600 exclusive temp file and reject stale writers. ``repr`` of
+``Pairing`` and ``WifiCredentials`` redacts secrets. POSIX mode bits do
+not provide Windows ACL privacy.
 
 Moment metadata comes from `cam.moments(session_id)` as `MomentInfo`
 objects: `timestamp_ms`, `datetime`, `score` (the camera's ranking, list is

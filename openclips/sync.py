@@ -28,6 +28,7 @@ from .camera import Camera, extract_jpeg
 from .catalog import Catalog
 from .errors import CameraError, HttpError, StorageError, WifiError
 from .jpeg import validate_jpeg
+from .persist import exclusive_lock
 from .proto import MomentInfo
 from .wifi import WifiCredentials, WifiJoiner
 
@@ -318,6 +319,11 @@ class Syncer:
         if not plan.items:
             self._report(STAGE_DONE, total=0)
             return result
+        lock_path = self.out_dir / ".openclips-sync.lock"
+        with exclusive_lock(lock_path, timeout=5.0):
+            return self._run_locked(plan, result)
+
+    def _run_locked(self, plan: SyncPlan, result: SyncResult) -> SyncResult:
         cam = self.camera
         with cam.keepalive():
             self._report(STAGE_WIFI_REQUEST)

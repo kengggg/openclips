@@ -71,6 +71,9 @@ not just the CLI. See `docs/LIBRARY.md`.
   sync; failures still restore the previous network. Camera profiles are
   owned by UUID (`openclips-*`) and nmcli errors no longer include
   passphrases or command lines.
+- Pairing and catalog files are written 0600 via exclusive temps with
+  interprocess locks and revision checks. Malformed stores are left on
+  disk. Pairing keys and Wi-Fi passphrases are redacted from repr.
 
 ## [0.1.0] - 2026-09-20
 

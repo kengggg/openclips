@@ -23,10 +23,15 @@ mode 0600. Never commit it.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import stat
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from .errors import StorageError
+from .persist import atomic_write_json, exclusive_lock
 
 
 def default_path() -> Path:
@@ -46,6 +51,11 @@ class Pairing:
     name: str = ""
     paired_at: str = ""
 
+    def __repr__(self) -> str:
+        return (
+            f"Pairing(address={self.address!r}, pairing_key=<redacted>, device_id={self.device_id}, name={self.name!r})"
+        )
+
     def to_json(self) -> dict:
         d = asdict(self)
         d["pairing_key"] = self.pairing_key.hex()
@@ -64,15 +74,50 @@ class Pairing:
         )
 
 
+def _validate_pairing_store(loaded: object) -> dict:
+    if not isinstance(loaded, dict):
+        raise StorageError("pairing store is invalid")
+    version = loaded.get("version", 1)
+    if not isinstance(version, int) or version > 1:
+        raise StorageError("pairing store version is unsupported")
+    cameras = loaded.get("cameras", {})
+    if cameras is None:
+        cameras = {}
+    if not isinstance(cameras, dict):
+        raise StorageError("pairing store is invalid")
+    for addr, entry in cameras.items():
+        if not isinstance(addr, str) or not isinstance(entry, dict):
+            raise StorageError("pairing store is invalid")
+        key = entry.get("pairing_key", "")
+        if not isinstance(key, str) or len(key) != 64:
+            raise StorageError("pairing store is invalid")
+        try:
+            bytes.fromhex(key)
+        except ValueError:
+            raise StorageError("pairing store is invalid") from None
+    pem = loaded.get("host_key_pem")
+    if pem is not None and not isinstance(pem, str):
+        raise StorageError("pairing store is invalid")
+    return {
+        "version": 1,
+        "revision": int(loaded.get("revision", 0) or 0),
+        "host_key_pem": pem,
+        "cameras": dict(cameras),
+    }
+
+
 class PairingStore:
     def __init__(self, path: Path | str | None = None):
         self.path = Path(path) if path else default_path()
-        self._data = {"host_key_pem": None, "cameras": {}}
+        self._data = {"version": 1, "revision": 0, "host_key_pem": None, "cameras": {}}
         if self.path.exists():
-            with open(self.path, encoding="utf-8") as f:
-                loaded = json.load(f)
-            self._data["host_key_pem"] = loaded.get("host_key_pem")
-            self._data["cameras"] = dict(loaded.get("cameras", {}))
+            self._warn_permissions()
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    loaded = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                raise StorageError("pairing store is invalid") from e
+            self._data = _validate_pairing_store(loaded)
 
     # -- host key ------------------------------------------------------------
 
@@ -112,10 +157,25 @@ class PairingStore:
 
     # -- persistence -----------------------------------------------------------
 
+    def _warn_permissions(self) -> None:
+        try:
+            mode = stat.S_IMODE(os.stat(self.path).st_mode)
+        except OSError:
+            return
+        if mode & 0o077:
+            logging.getLogger(__name__).warning("pairing store permissions are too open; chmod 600 the store file")
+
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=1)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.path)
+        with exclusive_lock(self.path):
+            if self.path.exists():
+                try:
+                    with open(self.path, encoding="utf-8") as f:
+                        disk = json.load(f)
+                    disk_rev = int(disk.get("revision", 0) or 0) if isinstance(disk, dict) else 0
+                except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                    disk_rev = self._data.get("revision", 0)
+                if disk_rev != self._data.get("revision", 0):
+                    raise StorageError("pairing store changed on disk; reload and retry")
+            self._data["revision"] = int(self._data.get("revision", 0)) + 1
+            self._data["version"] = 1
+            atomic_write_json(self.path, self._data, mode=0o600)
