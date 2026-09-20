@@ -18,6 +18,7 @@ thread called into the camera when the notification was read.
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import threading
@@ -90,6 +91,7 @@ PAIR_PUBLIC_QUERY_BUDGET = 6.0
 #: Bound on decrypted stray RPC replies retained between reads.
 PENDING_RESPONSE_LIMIT = 16
 _RETIRED_SEQ_LIMIT = 64
+NOTIFICATION_HISTORY_LIMIT = 256
 
 
 class Camera:
@@ -128,6 +130,13 @@ class Camera:
             pass
 
     def _emit(self, event: str, *args) -> None:
+        if event == EVENT_STATE and args:
+            state, changes = args[0], args[1] if len(args) > 1 else {}
+            snap = copy.copy(state)
+            snap.raw = list(getattr(state, "raw", []) or [])
+            args = (snap, dict(changes) if isinstance(changes, dict) else changes)
+        elif event == EVENT_NOTIFICATION and len(args) >= 3 and isinstance(args[2], dict):
+            args = (args[0], args[1], dict(args[2]))
         for cb in list(self._listeners.get(event, ())):
             try:
                 cb(*args)
@@ -251,6 +260,9 @@ class Camera:
             return False
         if len(P.response_fields(pt)) <= 1:
             self.notifications.append(pt)
+            overflow = len(self.notifications) - NOTIFICATION_HISTORY_LIMIT
+            if overflow > 0:
+                del self.notifications[:overflow]
             return True
         return False
 

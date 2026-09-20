@@ -96,3 +96,38 @@ def test_default_transport_factory_names():
     assert default_transport_factory("btgatt").__name__ == "BtgattTransport"
     with pytest.raises(ValueError):
         default_transport_factory("zigbee")
+
+
+def test_unexpected_connect_error_still_closes_transport():
+    key = os.urandom(32)
+    lens = FakeLens(pairing_key=key)
+
+    def factory(addr):
+        lens.reopen()
+        return lens
+
+    mgr = ConnectionManager("A", pairing_key=key, transport_factory=factory, keepalive=False, attempts=1)
+
+    def boom(self):
+        raise RuntimeError("handshake exploded")
+
+    import openclips.camera as camera_mod
+
+    orig = camera_mod.Camera.resume
+    camera_mod.Camera.resume = boom
+    try:
+        with pytest.raises(RuntimeError):
+            mgr.connect()
+        assert lens.closed and not mgr.connected
+    finally:
+        camera_mod.Camera.resume = orig
+
+
+def test_close_is_idempotent():
+    key = os.urandom(32)
+    lens = FakeLens(pairing_key=key)
+    mgr = ConnectionManager("A", pairing_key=key, transport_factory=FlakyFactory(lens), keepalive=False, attempts=1)
+    mgr.connect()
+    mgr.close()
+    mgr.close()
+    assert not mgr.connected and lens.closed

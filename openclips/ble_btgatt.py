@@ -16,6 +16,7 @@ import pty
 import re
 import select
 import shutil
+import signal
 import threading
 import time
 
@@ -25,30 +26,61 @@ from .transport import Transport
 _IND_RE = re.compile(rb"Not/Ind: 0x%04x - \(\d+ bytes\): (.*)$" % INDICATE_HANDLE)
 
 
+def reap_process(pid: int, timeout: float = 2.0) -> None:
+    """SIGTERM, wait up to ``timeout`` (monotonic), then SIGKILL and waitpid."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    while time.monotonic() < deadline:
+        try:
+            wpid, _ = os.waitpid(pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            return
+        if wpid:
+            return
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except (ChildProcessError, OSError):
+        pass
+
+
 class BtgattTransport(Transport):
-    """Connect to ``address`` and subscribe to indications."""
+    """Connect to ``address`` and subscribe to indications.
+
+    ``session_timeout_s`` is optional. The previous implicit 600 s
+    ``timeout(1)`` wrapper is opt-in; long-lived Linux sessions are not
+    claimed until hardware-validated.
+    """
 
     def __init__(
         self,
         address: str,
         mtu: int = ATT_MTU,
         connect_timeout: float = 20.0,
-        session_timeout_s: int = 600,
+        session_timeout_s: int | None = None,
         binary: str = "btgatt-client",
     ):
         if shutil.which(binary) is None:
             raise FileNotFoundError(f"{binary!r} not found. Install BlueZ utilities (bluez-utils / bluez-tools).")
         self.address = address
+        self._mtu = mtu
         self._lock = threading.Lock()
         self.buf = b""
         self.pid, self.fd = pty.fork()
         if self.pid == 0:  # child
             argv = [binary, "-d", address, "-m", str(mtu), "-v"]
-            if shutil.which("timeout"):
-                argv = ["timeout", str(session_timeout_s)] + argv
+            if session_timeout_s and shutil.which("timeout"):
+                argv = ["timeout", str(int(session_timeout_s))] + argv
             os.execvp(argv[0], argv)
-        deadline = time.time() + connect_timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + connect_timeout
+        while time.monotonic() < deadline:
             self._pump(0.3)
             if b"discovery procedures complete" in self.buf:
                 break
@@ -64,8 +96,8 @@ class BtgattTransport(Transport):
     # -- internals ---------------------------------------------------------
 
     def _pump(self, duration: float) -> None:
-        end = time.time() + duration
-        while time.time() < end:
+        end = time.monotonic() + duration
+        while time.monotonic() < end:
             if self.fd is None:
                 return
             r, _, _ = select.select([self.fd], [], [], 0.1)
@@ -96,13 +128,13 @@ class BtgattTransport(Transport):
     # -- Transport ---------------------------------------------------------
 
     def write(self, frame: bytes) -> None:
-        if len(frame) > ATT_MTU - 3:
+        if len(frame) > self._mtu - 3:
             raise ValueError(f"frame of {len(frame)} bytes exceeds single-write limit")
         hx = " ".join(f"0x{b:02x}" for b in frame)
         self._cmd(f"write-value 0x{WRITE_HANDLE:04x} {hx}")
 
     def read_indication(self, timeout: float = 1.0) -> bytes | None:
-        end = time.time() + timeout
+        end = time.monotonic() + timeout
         while True:
             while b"\n" in self.buf:
                 line, self.buf = self.buf.split(b"\n", 1)
@@ -112,7 +144,7 @@ class BtgattTransport(Transport):
                         return bytes(int(t, 16) for t in m.group(1).split())
                     except ValueError:
                         continue
-            remaining = end - time.time()
+            remaining = end - time.monotonic()
             if remaining <= 0:
                 return None
             self._pump(min(0.25, remaining))
@@ -121,14 +153,7 @@ class BtgattTransport(Transport):
         self.alive = False
         pid, self.pid = self.pid, None
         if pid:
-            try:
-                os.kill(pid, 15)
-            except OSError:
-                pass
-            try:
-                os.waitpid(pid, 0)
-            except (ChildProcessError, OSError):
-                pass
+            reap_process(pid)
         if self.fd is not None:
             try:
                 os.close(self.fd)

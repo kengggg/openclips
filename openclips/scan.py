@@ -31,9 +31,12 @@ def _from_adv(device, adv) -> CameraAdvertisement | None:
     return CameraAdvertisement(device.address, device.name, adv.rssi, payload, setup)
 
 
-async def scan_async(timeout: float = 8.0) -> list[CameraAdvertisement]:
-    from bleak import BleakScanner
+async def scan_async(timeout: float = 8.0, *, scanner=None) -> list[CameraAdvertisement]:
+    """Scan for cameras. ``scanner`` is a test double with ``start``/``stop``.
 
+    ``stop`` runs in a ``finally`` after a successful ``start``, including
+    cancellation and failure of the wait.
+    """
     found: dict[str, CameraAdvertisement] = {}
 
     def cb(device, adv):
@@ -41,10 +44,18 @@ async def scan_async(timeout: float = 8.0) -> list[CameraAdvertisement]:
         if hit:
             found[hit.address] = hit
 
-    scanner = BleakScanner(detection_callback=cb, scanning_mode="active")
+    if scanner is None:
+        from bleak import BleakScanner
+
+        scanner = BleakScanner(detection_callback=cb, scanning_mode="active")
+    started = False
     await scanner.start()
-    await asyncio.sleep(timeout)
-    await scanner.stop()
+    started = True
+    try:
+        await asyncio.sleep(timeout)
+    finally:
+        if started:
+            await scanner.stop()
     return sorted(found.values(), key=lambda h: -(h.rssi or -999))
 
 

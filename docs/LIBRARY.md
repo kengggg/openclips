@@ -173,9 +173,16 @@ async with AsyncConnection(address, store=PairingStore()) as cam:
         ...
 ```
 
-Blocking calls run on a one-thread executor, so they stay serialised;
-events are delivered on the loop. Run `await cam.poll(0.5)` periodically
-when idle so notifications flow.
+`AsyncConnection` owns one worker thread used for connect, camera RPCs, and
+close; the `AsyncCamera` it returns shares that executor. A standalone
+`AsyncCamera` owns its own pool. Cancelling an `await` cancels the future,
+not in-flight blocking work; `close`/`aclose` wait up to 8 s then shut the
+pool down. Repeated connect returns the same live wrapper; work after
+shutdown raises. Event queues hold 256 items; overflow ends the
+subscription with `EventOverflow`. `EVENT_STATE` arguments are snapshots
+taken at emission. Close wakes event iterators.
+
+Run `await cam.poll(0.5)` periodically when idle so notifications flow.
 
 ## Developing without a camera
 
