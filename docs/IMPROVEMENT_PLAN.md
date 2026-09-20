@@ -520,7 +520,7 @@ Update this table as work is completed; never mark a task done based on a plan.
 | PR | Status | Actual PR/commit | Validation and remaining limitations |
 | --- | --- | --- | --- |
 | 01 | GitHub PR open (not merged) | [#4](https://github.com/kengggg/openclips/pull/4) `pr-01-correlate-replies-deadlines` | Offline pytest against FakeLens, including correlation, pending bound, monotonic budgets, pairing/resume/notification/heartbeat, bundled field-1 state. `ruff check` / `ruff format --check` clean. Hardware status/sessions/repeated reads: **untested** (no camera). Missing-echo CSC on firmware 1.8 untested; plaintext handshake still field-only as documented. GitHub PRs #1–#3 are Dependabot Actions bumps, unrelated. |
-| 02 | Planned | — | Baseline and implementation pending |
+| 02 | GitHub PR open (not merged) | [#5](https://github.com/kengggg/openclips/pull/5) `pr-02-sync-recovery` | Offline pytest (JPEG fixtures, listing errors, retries, cancel-after-plan, CLI partial exit). Hardware capture/sync recovery: **untested** (no camera). |
 | 03 | Planned | — | Baseline and implementation pending |
 | 04 | Planned | — | Baseline and implementation pending |
 | 05 | Planned | — | Baseline and implementation pending |
