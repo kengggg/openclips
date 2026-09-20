@@ -20,3 +20,6 @@ clips/
 .DS_Store
 .idea/
 .vscode/
+.coverage
+coverage.xml
+htmlcov/
