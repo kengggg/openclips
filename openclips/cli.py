@@ -15,7 +15,7 @@ from . import proto as P
 from .camera import EVENT_STATE, Camera
 from .connection import ConnectionManager, default_transport_factory
 from .crypto import generate_host_key, host_key_from_pem, host_key_to_pem
-from .errors import CameraAsleep, CameraError, ConnectionLost, PairingKeyMismatch, WifiError
+from .errors import CameraAsleep, CameraError, ConnectionLost, PairingKeyMismatch, StorageError, WifiError
 from .store import Pairing, PairingStore
 from .sync import (
     STAGE_DONE,
@@ -39,6 +39,7 @@ EXIT_CAMERA = 3
 EXIT_WIFI = 4
 EXIT_NOTHING = 5
 EXIT_PARTIAL = 6
+EXIT_STORAGE = 7
 EXIT_INTERRUPT = 130
 
 logger = logging.getLogger("openclips.cli")
@@ -91,10 +92,18 @@ def connect_paired(args, store: PairingStore, keepalive: bool = True) -> Connect
     return mgr
 
 
-def parse_ids(text: str | None) -> list[int]:
+def parse_ids(text: str | list | None) -> list[int]:
     if not text:
         return []
-    return [int(x) for x in text.replace(" ", "").split(",") if x]
+    if isinstance(text, list):
+        return [int(x) for x in text]
+    try:
+        ids = [int(x) for x in text.replace(" ", "").split(",") if x]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError("moment ids must be comma-separated integers") from e
+    if any(i < 0 for i in ids):
+        raise argparse.ArgumentTypeError("moment ids must be non-negative")
+    return ids
 
 
 def fmt_time(m: P.MomentInfo) -> str:
@@ -106,7 +115,11 @@ def fmt_time(m: P.MomentInfo) -> str:
 
 
 def cmd_scan(args) -> int:
-    from .scan import scan
+    try:
+        from .scan import scan
+    except ImportError:
+        print("error: pip install 'openclips[ble]' to scan", file=sys.stderr)
+        return EXIT_CAMERA
 
     hits = scan(args.timeout)
     rows = [
@@ -241,6 +254,7 @@ def cmd_moments(args) -> int:
 
 def cmd_capture(args) -> int:
     store = PairingStore(args.store)
+    entered = None
     with connect_paired(args, store) as cam:
         ok = cam.set_update_required(False)
         cam.set_active_user()
@@ -256,7 +270,9 @@ def cmd_capture(args) -> int:
                 "Close the lens cover, then open it: the camera enters CAPTURE and starts\n"
                 "curating moments. Close the cover when done and run: openclips complete"
             )
-    emit(args, msg, {"ok": ok, "state": st.as_dict()})
+    emit(args, msg, {"ok": ok, "state": st.as_dict(), "entered_capture": entered if args.wait else None})
+    if args.wait:
+        return EXIT_OK if entered else EXIT_CAMERA
     return EXIT_OK if ok else EXIT_CAMERA
 
 
@@ -269,7 +285,10 @@ def cmd_complete(args) -> int:
 
 
 def cmd_delete(args) -> int:
-    ids = parse_ids(args.moments)
+    if args.trash:
+        print("error: delete --trash is unsupported until live-tested (library builders exist)", file=sys.stderr)
+        return EXIT_USAGE
+    ids = args.moments if isinstance(args.moments, list) else parse_ids(args.moments)
     if not ids:
         print("no moment ids", file=sys.stderr)
         return EXIT_USAGE
@@ -305,11 +324,20 @@ def cmd_watch(args) -> int:
     with connect_paired(args, store) as cam:
 
         def on_state(state, changes):
-            for k, (old, new) in changes.items():
-                print(f"{time.strftime('%H:%M:%S')}  {k}: {old} -> {new}", flush=True)
+            if args.json:
+                print(
+                    json.dumps({"event": "state", "changes": changes, "state": state.as_dict()}, default=str),
+                    flush=True,
+                )
+            else:
+                for k, (old, new) in changes.items():
+                    print(f"{time.strftime('%H:%M:%S')}  {k}: {old} -> {new}", flush=True)
 
         cam.on(EVENT_STATE, on_state)
-        print(json.dumps(cam.state.as_dict(), default=str) if args.json else f"state: {cam.state.system_state_name}")
+        if args.json:
+            print(json.dumps({"event": "initial", "state": cam.state.as_dict()}, default=str), flush=True)
+        else:
+            print(f"state: {cam.state.system_state_name}")
         end = time.time() + args.duration if args.duration else None
         try:
             while end is None or time.time() < end:
@@ -350,6 +378,10 @@ def _progress_printer(verbose: bool):
 def cmd_sync(args) -> int:
     from .wifi_nmcli import NmcliWifi
 
+    moments = args.moments if isinstance(args.moments, list) else parse_ids(args.moments)
+    if moments and args.session is None:
+        print("error: --moments requires --session", file=sys.stderr)
+        return EXIT_USAGE
     store = PairingStore(args.store)
     out_root = os.path.abspath(os.path.expanduser(args.out))
     with connect_paired(args, store) as cam:
@@ -364,7 +396,7 @@ def cmd_sync(args) -> int:
         )
         plan = syncer.plan(
             session_id=args.session,
-            moment_ids=parse_ids(args.moments) or None,
+            moment_ids=moments or None,
             all_sessions=args.all_sessions,
         )
         if plan.open_session:
@@ -400,6 +432,8 @@ def cmd_sync(args) -> int:
     emit(args, f"downloaded {len(result.downloaded)} of {plan.total}", data)
     if result.cancelled:
         return EXIT_INTERRUPT
+    if result.aborted or result.catalog_errors:
+        return EXIT_STORAGE if not result.downloaded else EXIT_PARTIAL
     if not result.ok:
         return EXIT_PARTIAL if result.downloaded else EXIT_CAMERA
     return EXIT_OK
@@ -441,6 +475,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="openclips",
         description="Pair with, control and download photos from a Google Clips camera.",
+        epilog="Exit codes: 0 ok, 2 usage, 3 camera, 4 wifi, 5 nothing, 6 partial, 7 storage, 130 interrupted.",
     )
     p.add_argument("--version", action="version", version=f"openclips {__version__}")
     p.add_argument("-a", "--address", help="camera BLE address (default: the single stored pairing)")
@@ -488,8 +523,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("delete", help="delete (or trash) moments")
     s.add_argument("session", type=int)
-    s.add_argument("moments", help="comma-separated moment ids")
-    s.add_argument("--trash", action="store_true", help="move to trash instead of deleting")
+    s.add_argument("moments", type=parse_ids, help="comma-separated moment ids")
+    s.add_argument(
+        "--trash",
+        action="store_true",
+        help="unsupported: trash RPCs have not been live-tested (fails without connecting)",
+    )
     s.set_defaults(func=cmd_delete)
 
     s = sub.add_parser("wifi", help="open the camera SoftAP and print credentials")
@@ -503,7 +542,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("sync", help="download moments as JPEG files (Linux + NetworkManager)")
     s.add_argument("--out", default="./clips", help="output folder (default ./clips)")
     s.add_argument("--session", type=int, help="only this session id")
-    s.add_argument("--moments", help="comma-separated moment ids (with --session)")
+    s.add_argument("--moments", type=parse_ids, help="comma-separated moment ids (requires --session)")
     s.add_argument("--all-sessions", action="store_true", help="every session with moments")
     s.add_argument("--iface", help="Wi-Fi interface (default: auto-detect)")
     s.add_argument("--overwrite", action="store_true")
@@ -518,7 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("encode", help="print request bodies (no camera needed)")
     s.add_argument("--session", type=int, required=True)
-    s.add_argument("--moments", default="", help="comma-separated moment ids")
+    s.add_argument("--moments", type=parse_ids, default=None, help="comma-separated moment ids")
     s.set_defaults(func=cmd_encode)
     return p
 
@@ -534,6 +573,9 @@ def main(argv=None) -> int:
     except WifiError as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_WIFI
+    except StorageError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_STORAGE
     except CameraError as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_CAMERA

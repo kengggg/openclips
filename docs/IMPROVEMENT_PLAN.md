@@ -453,62 +453,63 @@ Primary files: `openclips/cli.py`, `openclips/errors.py`,
 
 Tasks:
 
-- [ ] 06.1 Specify a JSON contract for every command and normalized errors. Keep
+- [x] 06.1 Specify a JSON contract for every command and normalized errors. Keep
   single-result commands as one JSON document and define watch as one JSON object
   per line, including initial state and later events. Keep human progress on stderr.
   Preserve documented fields where possible; use a stable list type for downloaded
   items and additive count/error fields. Document unavoidable shape corrections.
-- [ ] 06.2 Publish an exit-code table: success, usage error, camera failure, Wi-Fi
+- [x] 06.2 Publish an exit-code table: success, usage error, camera failure, Wi-Fi
   failure, nothing found, partial sync, local storage failure, and interruption.
   Preserve existing codes where meaningful and add distinct codes where needed.
   Use structured failures from earlier PRs; never infer categories from message text.
   Choose and test deterministic precedence when more than one category occurs.
-- [ ] 06.3 Move moment-ID, timeout, retry-count, and dependent-option validation
+- [x] 06.3 Move moment-ID, timeout, retry-count, and dependent-option validation
   into argparse before creating a store/connection. Validate `--moments` requires
   `--session`; reject malformed/out-of-range values using wire-contract limits.
   Keep meaningful zero values, such as unlimited watch duration, where documented.
-- [ ] 06.4 Normalize expected optional-dependency, adapter, storage, and timeout
+- [x] 06.4 Normalize expected optional-dependency, adapter, storage, and timeout
   failures into actionable CLI errors without raw tracebacks or secret-bearing
   exception strings. Make `capture --wait` return nonzero when the requested
   CAPTURE state is not reached even if arming succeeded. Define JSON errors for
   parse failures as well as command failures and test both.
-- [ ] 06.5 Reconcile unsupported actions. Until live evidence exists, make
+- [x] 06.5 Reconcile unsupported actions. Until live evidence exists, make
   `delete --trash` fail before connecting with a clear unsupported/experimental
   explanation; keep the documented builder/library status explicit. Do not send
   unvalidated requests merely to test a CLI flag. Align roadmap, help, and library
   claims with the actual per-platform/per-firmware validation record.
-- [ ] 06.6 Audit changed command/progress/debug paths for raw protocol bytes,
+- [x] 06.6 Audit changed command/progress/debug paths for raw protocol bytes,
   network credentials, private identifiers, metadata, and personal paths. Use
   explicit allowlisted diagnostic fields and document redacted bug-report examples.
   Keep user-requested local operational output distinct from shareable diagnostics.
-- [ ] 06.7 Consolidate regression coverage from PR 01–05, including mocked scan
+- [x] 06.7 Consolidate regression coverage from PR 01–05, including mocked scan
   start/stop and adapter exception mapping. Keep real hardware out of CI. Maintain
   the Python matrix and wheel smoke test; add a clean-wheel core-import smoke test
   proving optional BLE/OS dependencies are not imported by the base library.
-- [ ] 06.8 Establish measured coverage after dependencies are available and use a
+- [x] 06.8 Establish measured coverage after dependencies are available and use a
   justified floor or targeted branch expectations for critical changed code; do
   not invent a baseline or require 100% coverage. Limit uploaded artifacts to the
   intended package and sanitized reports. Ensure pre-commit/private-key checks
   also run in CI where their dependencies are available.
-- [ ] 06.9 Update command examples, release notes, and this plan's completion
+- [x] 06.9 Update command examples, release notes, and this plan's completion
   status. Record each PR's actual validation and unresolved hardware limitations.
   Cross-platform Wi-Fi, GUI, thumbnails, new RPCs, parser rewrites, and broad
   performance work remain separate follow-up projects.
 
 Validation:
 
-- [ ] Parse stdout as JSON/JSON Lines for every JSON-mode success and expected
+- [x] Parse stdout as JSON/JSON Lines for every JSON-mode success and expected
   failure, including watch events, partial sync, cancellation, and no-op sync.
-- [ ] Verify exit-code precedence, stable field types, stderr behavior, and no
+- [x] Verify exit-code precedence, stable field types, stderr behavior, and no
   traceback for expected errors. Capture-wait timeout must not return success.
-- [ ] Invalid options and unsupported trash mode fail before transport/store
+- [x] Invalid options and unsupported trash mode fail before transport/store
   side effects. Missing optional packages provide an actionable installation hint.
-- [ ] Use synthetic secrets and identifiers to verify diagnostic redaction; verify
+- [x] Use synthetic secrets and identifiers to verify diagnostic redaction; verify
   the intentional local Wi-Fi credential display separately without shared output.
-- [ ] Full suite, lint, formatting, package metadata check, clean-wheel install,
+- [x] Full suite, lint, formatting, package metadata check, clean-wheel install,
   core import, CLI help/version, and offline encode smoke tests pass in CI.
 - [ ] Publish only a sanitized validation summary, listing hardware checks actually
   performed and explicitly distinguishing mocked portable-adapter coverage.
+  Hardware: **untested** in this environment. Portable adapters mocked only.
 
 Completion: public contracts are documented and tested, privacy assertions cover
 the changed paths, and the six PRs form a usable release candidate. Release/tag

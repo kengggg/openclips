@@ -147,6 +147,12 @@ when listing a session failed, a transfer/save failed, cleanup failed, or
 the run was cancelled. CLI `sync` returns nonzero for partial and failed
 runs (exit 6 when some files saved, 3 when none did).
 
+CLI exit codes: 0 success, 2 usage, 3 camera, 4 Wi-Fi, 5 nothing found,
+6 partial sync, 7 storage, 130 interrupted. JSON mode prints one document
+per command, except `watch --json` which prints one JSON object per line
+(initial state, then events). `--moments` requires `--session`. `delete
+--trash` fails without connecting until trash RPCs are live-tested.
+
 `--keep-wifi` / `Syncer(keep_network=True)` keeps the camera SoftAP only
 after a fully successful download. Cancellation and failures still leave
 the camera network and restore the prior connection. Retention is best

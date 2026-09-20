@@ -25,7 +25,8 @@ compatibility notes, and private-data handling requirements for each.
 - **Moment metadata over HTTP.** Timestamps and scores are parsed from
   `LIST_MOMENTS`; `/fetch_moment_metadata` likely returns more and is not
   decoded yet.
-- **Trash and restore.** Builders exist; neither has been sent live.
+- **Trash and restore.** Builders exist; neither has been sent live. The
+  CLI `delete --trash` flag fails before connecting until that changes.
 - **Longer SoftAP life.** Work out what the Android app does to keep the
   Wi-Fi Direct group owner alive past the first handful of requests.
 - **Wake without touching the camera.** Nothing over BLE has woken an idle
