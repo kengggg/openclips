@@ -18,6 +18,9 @@ class WifiCredentials:
     url: str = HTTP_DEFAULT
     raw: bytes = field(default=b"", repr=False)
 
+    def __repr__(self) -> str:
+        return f"WifiCredentials(ssid={self.ssid!r}, passphrase=<redacted>, url={self.url!r})"
+
 
 @runtime_checkable
 class WifiJoiner(Protocol):

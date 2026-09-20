@@ -376,57 +376,57 @@ add a small internal persistence helper if useful; extend store/catalog/sync tes
 
 Tasks:
 
-- [ ] 05.1 Create a shared atomic JSON-write helper using a unique exclusively
+- [x] 05.1 Create a shared atomic JSON-write helper using a unique exclusively
   created temporary file in the destination directory. Credential files must be
   mode 0600 before any contents are written; use private permissions for catalogs
   too because they contain photo metadata. Flush/fsync the file before replacement,
   fsync the directory where supported, and always clean up owned temporary files.
   Do not chmod unrelated existing parent directories.
-- [ ] 05.2 Define permission behavior on supported platforms and detect unsafe
+- [x] 05.2 Define permission behavior on supported platforms and detect unsafe
   existing store permissions. Report remediation without reading credentials into
   logs. Do not claim POSIX mode bits enforce Windows ACL privacy; document/test
   platform limitations and require an appropriate ACL implementation before making
   that claim for a Windows release.
-- [ ] 05.3 Validate JSON root/container types, schema versions, identifier types,
+- [x] 05.3 Validate JSON root/container types, schema versions, identifier types,
   credential encodings/lengths, and catalog entry fields. Introduce clear storage
   errors that expose neither file contents nor raw decoder snippets. A malformed
   pairing store must not be silently replaced with an empty store. Preserve an
   invalid catalog and offer an explicit rebuild/recovery path rather than destroy it.
-- [ ] 05.4 Read current unversioned pairing files and version-1 catalogs. Add
+- [x] 05.4 Read current unversioned pairing files and version-1 catalogs. Add
   versioning/migrations only where required by PR 02 metadata or validation;
   reject unsupported future versions without rewriting them. Test migration from
   synthetic legacy files and document downgrade behavior before release.
-- [ ] 05.5 Define and enforce a persistence concurrency contract. Serialize saves
+- [x] 05.5 Define and enforce a persistence concurrency contract. Serialize saves
   with an interprocess lock and compare the on-disk revision with the loaded
   revision while holding it. Reject stale writers with a clear reload/retry error;
   do not silently merge credentials or overwrite concurrent changes. Unique temp
   files alone do not solve lost updates. Cover lock timeout and process-exit cleanup.
-- [ ] 05.6 Detect overlapping syncs into the same output/catalog and prevent
+- [x] 05.6 Detect overlapping syncs into the same output/catalog and prevent
   concurrent writers from racing file replacement. Record camera provenance when
   available and reject known camera/session collisions. Document remaining legacy
   ambiguity; defer a camera-namespaced directory/schema migration to a separate
   feature unless implementation proves it necessary for these guarantees.
-- [ ] 05.7 Exclude pairing/private material and passphrases from repr, including
+- [x] 05.7 Exclude pairing/private material and passphrases from repr, including
   nested credential-bearing objects. Provide explicit safe diagnostic summaries
   rather than generic dataclass-to-dict dumps. Raw notification and response fields
   are not diagnostic summaries. Preserve explicit programmatic credential access.
-- [ ] 05.8 Adopt the helper in catalog checkpointing and PairingStore, update
+- [x] 05.8 Adopt the helper in catalog checkpointing and PairingStore, update
   credential-handling documentation/examples, and keep recovery instructions local
   without asking users to upload stores or catalogs.
 
 Validation:
 
-- [ ] Observe permissions at temporary-file creation and during writing, including
+- [x] Observe permissions at temporary-file creation and during writing, including
   a permissive umask; check successful destination permissions on POSIX.
-- [ ] Simulated serialization, disk-full, flush/fsync, replace, and interruption
+- [x] Simulated serialization, disk-full, flush/fsync, replace, and interruption
   failures retain the last usable destination and clean up owned temporary files.
   Distinguish failures before replacement from uncertain durability after replacement.
-- [ ] Malformed JSON, wrong field types, invalid key encodings/lengths, unknown
+- [x] Malformed JSON, wrong field types, invalid key encodings/lengths, unknown
   versions, and legacy valid files produce the specified outcomes without payloads
   in errors. Corrupt data is preserved for local recovery.
-- [ ] Two independent processes cannot silently overwrite each other's updates;
+- [x] Two independent processes cannot silently overwrite each other's updates;
   lock timeout, stale revisions, process death, and overlapping sync are exercised.
-- [ ] repr/log/serialization tests with synthetic sentinels cover Pairing,
+- [x] repr/log/serialization tests with synthetic sentinels cover Pairing,
   WifiCredentials, SyncProgress, SyncResult, and nested errors. Intentional local
   credential access still works and is not included in shared test artifacts.
 
@@ -525,5 +525,5 @@ Update this table as work is completed; never mark a task done based on a plan.
 | 02 | GitHub PR open (not merged) | [#5](https://github.com/kengggg/openclips/pull/5) `pr-02-sync-recovery` | Offline pytest (JPEG fixtures, listing errors, retries, cancel-after-plan, CLI partial exit). Hardware capture/sync recovery: **untested** (no camera). |
 | 03 | GitHub PR open (not merged) | [#6](https://github.com/kengggg/openclips/pull/6) `pr-03-async-lifecycle` | Offline FakeLens/fake scanner/fake Bleak/reap tests. Hardware long-session/reconnect: **untested**. Bleak on macOS/Windows unvalidated. |
 | 04 | GitHub PR open (not merged) | [#7](https://github.com/kengggg/openclips/pull/7) `pr-04-wifi-restore` | Mocked nmcli tests. Hardware join/restore/keep-network: **untested**. |
-| 05 | Planned | — | Baseline and implementation pending |
+| 05 | GitHub PR open (not merged) | [#8](https://github.com/kengggg/openclips/pull/8) `pr-05-persistence` | Offline store/catalog lock/repr tests. No real pairing store used. POSIX 0600; Windows ACL not claimed. |
 | 06 | Planned | — | Baseline and implementation pending |
