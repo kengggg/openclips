@@ -239,55 +239,56 @@ Primary files: `openclips/aio.py`, `openclips/connection.py`,
 
 Tasks:
 
-- [ ] 03.1 Give AsyncConnection one owned single-worker execution path for connect,
+- [x] 03.1 Give AsyncConnection one owned single-worker execution path for connect,
   camera calls, and manager close; let its AsyncCamera share that executor. Keep
   standalone AsyncCamera ownership explicit. Make repeated connect return the
   same live wrapper, and reject work once shutdown has started.
-- [ ] 03.2 Define cancellation as cancellation of the await, not proof that a
+- [x] 03.2 Define cancellation as cancellation of the await, not proof that a
   blocking operation stopped. Retain ownership of in-flight connect/call futures,
   arrange cleanup when they complete, and shield necessary cleanup from repeated
   cancellation. Close must wait/serialize safely without blocking the event loop.
   Give shutdown a documented bound based on underlying operation timeouts.
-- [ ] 03.3 Make manager/camera/adapter close idempotent, including partial setup.
+- [x] 03.3 Make manager/camera/adapter close idempotent, including partial setup.
   Release acquired resources on all setup failures while preserving the original
   error. Do not drop references to a still-running keepalive worker after a timed
   join; avoid joining a worker from its own disconnect callback.
-- [ ] 03.4 Track Bleak disconnects through the adapter callback and set `alive`
+- [x] 03.4 Track Bleak disconnects through the adapter callback and set `alive`
   consistently. On failed connect/subscribe/write timeout, cancel and settle
   pending work, disconnect where possible, stop/join the loop thread, and close
   the loop. Map adapter errors to the documented transport/connection contract.
-- [ ] 03.5 Bound Btgatt process teardown with terminate/wait/kill/reap behavior
+- [x] 03.5 Bound Btgatt process teardown with terminate/wait/kill/reap behavior
   and guarantee descriptor cleanup. Use monotonic transport deadlines and the
   configured MTU in write-size checks. Make the existing fixed session lifetime
   an explicit option rather than silently breaking long-running connections;
   validate the new default on Linux before claiming long-lived support.
-- [ ] 03.6 Put scanner stop in cancellation/failure cleanup after successful start.
+- [x] 03.6 Put scanner stop in cancellation/failure cleanup after successful start.
   Test with a fake scanner; do not start a real BLE scan during automated checks.
-- [ ] 03.7 Bound async event delivery and raw notification history. Copy state and
+- [x] 03.7 Bound async event delivery and raw notification history. Copy state and
   mutable event data at emission so queued events retain their historical meaning.
   Document a fixed queue limit and overflow policy: end an overloaded subscription
   with an explicit overflow error rather than silently discard arbitrary events.
   Ensure close/disconnect wakes event consumers and unregisters handlers, including
   full-queue and event-loop-shutdown cases. Preserve the synchronous callback API.
-- [ ] 03.8 Document executor ownership, cancellation limits, closing, event
+- [x] 03.8 Document executor ownership, cancellation limits, closing, event
   snapshots, and overflow. Add transport contract tests reusable across fake adapters.
 
 Validation:
 
-- [ ] Synchronization barriers prove close never overlaps an active camera call;
+- [x] Synchronization barriers prove close never overlaps an active camera call;
   queued calls are completed or rejected according to the documented policy.
-- [ ] Cancellation during connect, RPC, and shutdown eventually releases resources;
+- [x] Cancellation during connect, RPC, and shutdown eventually releases resources;
   failed `async with` entry does not orphan a later successful connection.
-- [ ] Repeated close/connect and failed handshake/notification subscription leave
+- [x] Repeated close/connect and failed handshake/notification subscription leave
   no owned live thread, unclosed loop, child process, scanner, or descriptor.
-- [ ] Disconnect marks the camera unavailable and emits one disconnect event;
+- [x] Disconnect marks the camera unavailable and emits one disconnect event;
   reconnect works. Shutdown from a callback does not deadlock.
-- [ ] Slow consumers hit a bounded overflow outcome, historical state is stable,
+- [x] Slow consumers hit a bounded overflow outcome, historical state is stable,
   and iterators terminate/unsubscribe on close without unhandled callback errors.
-- [ ] Mocked Btgatt ignores termination until escalation and is still reaped;
+- [x] Mocked Btgatt ignores termination until escalation and is still reaped;
   adapter deadlines remain bounded under simulated clock changes.
 - [ ] Hardware check: long-running Linux session and reconnect. Keep portable
   adapter hardware support explicitly unvalidated until each OS has been tested.
+  Untested here (no camera). Portable Bleak hardware remains unvalidated.
 
 Completion: lifecycle tests establish ownership and eventual cleanup for every
 acquisition path. Rollback: no data migration; document event semantics changes
@@ -521,7 +522,7 @@ Update this table as work is completed; never mark a task done based on a plan.
 | --- | --- | --- | --- |
 | 01 | GitHub PR open (not merged) | [#4](https://github.com/kengggg/openclips/pull/4) `pr-01-correlate-replies-deadlines` | Offline pytest against FakeLens, including correlation, pending bound, monotonic budgets, pairing/resume/notification/heartbeat, bundled field-1 state. `ruff check` / `ruff format --check` clean. Hardware status/sessions/repeated reads: **untested** (no camera). Missing-echo CSC on firmware 1.8 untested; plaintext handshake still field-only as documented. GitHub PRs #1–#3 are Dependabot Actions bumps, unrelated. |
 | 02 | GitHub PR open (not merged) | [#5](https://github.com/kengggg/openclips/pull/5) `pr-02-sync-recovery` | Offline pytest (JPEG fixtures, listing errors, retries, cancel-after-plan, CLI partial exit). Hardware capture/sync recovery: **untested** (no camera). |
-| 03 | Planned | — | Baseline and implementation pending |
+| 03 | GitHub PR open (not merged) | [#6](https://github.com/kengggg/openclips/pull/6) `pr-03-async-lifecycle` | Offline FakeLens/fake scanner/fake Bleak/reap tests. Hardware long-session/reconnect: **untested**. Bleak on macOS/Windows unvalidated. |
 | 04 | Planned | — | Baseline and implementation pending |
 | 05 | Planned | — | Baseline and implementation pending |
 | 06 | Planned | — | Baseline and implementation pending |

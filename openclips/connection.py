@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 
 from .camera import Camera
-from .errors import CameraAsleep, CameraError, ConnectionLost, NotPaired
+from .errors import CameraAsleep, ConnectionLost, NotPaired
 from .store import Pairing, PairingStore
 from .transport import Transport
 
@@ -137,10 +137,10 @@ class ConnectionManager:
             if self.keepalive:
                 cam.start_keepalive(self.keepalive_interval)
         except CameraAsleep as e:
-            transport.close()
+            cam.close()
             raise CameraAsleep(f"{e}; {WAKE_HINT}") from None
-        except CameraError:
-            transport.close()
+        except Exception:
+            cam.close()
             raise
         self.transport, self.camera = transport, cam
         return cam
@@ -164,8 +164,11 @@ class ConnectionManager:
                 cam.close()
             except Exception:
                 logger.debug("error closing camera", exc_info=True)
-        elif transport is not None:
-            transport.close()
+        if transport is not None and (cam is None or cam.transport is not transport):
+            try:
+                transport.close()
+            except Exception:
+                logger.debug("error closing transport", exc_info=True)
 
     def __enter__(self) -> Camera:
         return self.connect()

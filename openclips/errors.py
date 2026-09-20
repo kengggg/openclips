@@ -54,3 +54,7 @@ class HttpError(CameraError):
 
 class StorageError(CameraError):
     """Local disk failed in a way that should stop the rest of a sync."""
+
+
+class EventOverflow(CameraError):
+    """An async event subscription exceeded its bounded queue."""

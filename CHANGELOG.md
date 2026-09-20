@@ -30,6 +30,9 @@ not just the CLI. See `docs/LIBRARY.md`.
 - Structural JPEG validation before committing a download; catalog checkpoint
   after each saved file; configurable HTTP retries for transient fetch
   failures only. `HttpError` and `StorageError`.
+- AsyncConnection shares one worker with its AsyncCamera; bounded event
+  queues (`EventOverflow`); Bleak disconnect tracking; Btgatt
+  terminate/wait/kill reap; scan stop in `finally`.
 
 ### Changed
 - `Camera(..., log=)` removed in favour of stdlib `logging` under `openclips.*`.
@@ -60,6 +63,9 @@ not just the CLI. See `docs/LIBRARY.md`.
   some downloads failed. `openclips sync` returns nonzero for partial and
   failed runs. HTTP errors no longer retain response bodies. Cleanup after
   SoftAP acquisition always runs, including when join/preview fails.
+- ConnectionManager closes the camera/transport on any setup failure, not
+  only CameraError. Async event consumers get a copied CameraState.
+  Btgatt process teardown no longer blocks forever on waitpid.
 
 ## [0.1.0] - 2026-09-20
 
