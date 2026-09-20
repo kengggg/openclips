@@ -9,7 +9,8 @@ uses [Semantic Versioning](https://semver.org/).
 ## [0.1.0] - 2026-09-20
 
 First public release. Everything below is validated live against a GC-6013
-on firmware 1.8 from Linux.
+on firmware 1.8 from Linux (pair, status, sessions, complete and a full
+`sync` of three moments on 2026-09-20).
 
 ### Added
 - `openclips` package: protobuf codec, framing, P-256 pairing, HMAC proofs,

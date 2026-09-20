@@ -23,6 +23,10 @@ retail unit running firmware 1.8.
 * Myriad idles after a few minutes of silence even while advertising.
   If `openclips status` reports the camera asleep, press the shutter once
   and retry.
+* In practice the camera answers **one GATT connection per wake**. After a
+  command disconnects, the next one usually needs another shutter press.
+  `openclips sync` does the whole list → Wi-Fi → download job inside one
+  connection for this reason; chain your own work the same way.
 * Battery drains quickly in CAPTURE. Keep it on power for long sessions.
 
 ## Internals

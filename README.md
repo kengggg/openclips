@@ -59,7 +59,9 @@ Other commands: `status`, `sessions`, `moments <session>`, `wifi --hold`
 machine-readable output and `-v` for a log of every step.
 
 If the camera does not answer, press the shutter button once. Myriad
-sleeps after a few idle minutes even though it keeps advertising.
+sleeps after a few idle minutes even though it keeps advertising, and it
+usually accepts only one connection per wake, so expect to press the
+shutter before each command.
 
 ## Library
 
