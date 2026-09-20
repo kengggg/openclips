@@ -311,6 +311,17 @@ def test_catalog_checkpoint_failure_keeps_image(cam, tmp_path, monkeypatch):
     assert result.downloaded
 
 
+def test_keep_network_skips_leave_on_success_only(cam, tmp_path):
+    wifi = RecordingWifi()
+    result = Syncer(cam, tmp_path, wifi, keep_network=True).sync(session_id=SID, moment_ids=[2])
+    assert result.ok and wifi.joined and wifi.left == 0
+    assert cam.lens.wifi_open  # CANCEL_WIFI not sent
+    wifi2 = RecordingWifi(ok=False)
+    with pytest.raises(WifiError):
+        Syncer(cam, tmp_path, wifi2, keep_network=True, overwrite=True).sync(session_id=SID, moment_ids=[2])
+    assert wifi2.left == 1
+
+
 def test_cleanup_runs_after_softap_even_if_join_fails(cam, tmp_path):
     wifi = RecordingWifi(ok=False)
     with pytest.raises(WifiError):
