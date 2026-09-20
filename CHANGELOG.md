@@ -27,6 +27,9 @@ not just the CLI. See `docs/LIBRARY.md`.
   `sessions` shows start time, `--retries`, catalog-aware `sync`.
 - Packaging build check, Python 3.14 in CI, coverage, Dependabot, release and
   PyPI publish workflows, pre-commit config, CITATION.cff.
+- Structural JPEG validation before committing a download; catalog checkpoint
+  after each saved file; configurable HTTP retries for transient fetch
+  failures only. `HttpError` and `StorageError`.
 
 ### Changed
 - `Camera(..., log=)` removed in favour of stdlib `logging` under `openclips.*`.
@@ -52,6 +55,11 @@ not just the CLI. See `docs/LIBRARY.md`.
 - A field-1 state bundle on the same encrypted frame as a matching RPC
   updates `Camera.state` and emits events; the RPC is still returned, not
   absorbed. `resume()` remains the CSC owner.
+- Sync no longer treats a listing failure as "nothing new", no longer skips
+  truncated or non-regular files, and no longer reports full success when
+  some downloads failed. `openclips sync` returns nonzero for partial and
+  failed runs. HTTP errors no longer retain response bodies. Cleanup after
+  SoftAP acquisition always runs, including when join/preview fails.
 
 ## [0.1.0] - 2026-09-20
 

@@ -137,7 +137,9 @@ def test_sync_downloads_jpegs(store, fake, capsys, tmp_path, monkeypatch):
 
     def fake_post(url, path, body, timeout=30.0):
         assert path == "/fetch_moment" and url == "http://192.168.49.10:8080"
-        return b"\xff\xd8\xff\xe0" + body
+        from openclips.jpeg import structural_jpeg
+
+        return structural_jpeg()
 
     monkeypatch.setattr(cli.Camera, "http_post", staticmethod(fake_post))
 
@@ -157,6 +159,37 @@ def test_sync_downloads_jpegs(store, fake, capsys, tmp_path, monkeypatch):
 
     rc, out, err = run(capsys, "sync", "--out", str(out_dir), "--all-sessions")
     assert rc == 0 and "nothing new" in out
+
+
+def test_sync_partial_failure_is_nonzero(store, fake, capsys, tmp_path, monkeypatch):
+    key = b"\x0d" * 32
+    s = PairingStore(store)
+    s.put(Pairing("AA:BB:CC:DD:EE:FF", key))
+    s.save()
+    lens = FakeLens(pairing_key=key, sessions={SID: [2, 3]})
+    fake["factory"] = lambda addr: lens
+    from openclips import wifi_nmcli as nm
+    from openclips.jpeg import structural_jpeg
+
+    monkeypatch.setattr(nm, "detect_wifi_iface", lambda: "wlan0")
+    monkeypatch.setattr(nm, "active_connection", lambda iface: None)
+    monkeypatch.setattr(nm, "wait_for_ssid", lambda ssid, iface, timeout, log=None: True)
+    monkeypatch.setattr(nm, "join_nmcli", lambda creds, iface, log=None: True)
+    monkeypatch.setattr(nm, "forget_nmcli", lambda ssid: None)
+    monkeypatch.setattr(nm, "restore_nmcli", lambda conn: None)
+    n = {"i": 0}
+
+    def fake_post(url, path, body, timeout=30.0):
+        n["i"] += 1
+        if n["i"] == 2:
+            raise cli.CameraError("HTTP 500 on /fetch_moment")
+        return structural_jpeg()
+
+    monkeypatch.setattr(cli.Camera, "http_post", staticmethod(fake_post))
+    rc, out, err = run(capsys, "--json", "sync", "--out", str(tmp_path / "photos"))
+    assert rc == cli.EXIT_PARTIAL
+    data = json.loads(out)
+    assert len(data["downloaded"]) == 1 and len(data["failed"]) == 1
 
 
 def test_watch_prints_state_changes(store, fake, capsys):

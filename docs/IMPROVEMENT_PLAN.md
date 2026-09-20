@@ -153,12 +153,12 @@ Primary files: `openclips/sync.py`, `openclips/catalog.py`,
 
 Tasks:
 
-- [ ] 02.1 Add explicit planning failures and run-level failures/cleanup warnings
+- [x] 02.1 Add explicit planning failures and run-level failures/cleanup warnings
   to sync results, while retaining existing fields where practical. Distinguish
   an empty session, an already-downloaded session, an unreadable session, a failed
   transfer, a failed save, and a failed catalog update. Define `ok` across all
   failure categories. Do not turn total listing failure into "nothing new".
-- [ ] 02.2 Add bounded structural JPEG validation before committing a file:
+- [x] 02.2 Add bounded structural JPEG validation before committing a file:
   validate segment lengths, required image/scan structure, and a complete end
   marker, with support for the observed response wrapper. Keep `extract_jpeg()`
   as the extraction helper if needed for compatibility. State clearly that
@@ -166,52 +166,53 @@ Tasks:
   start/end-marker check detects arbitrary corruption. Avoid a new runtime image
   dependency in this PR. Replace current marker-only fake downloads with valid
   synthetic fixtures and add deliberately damaged variants.
-- [ ] 02.3 For existing files, require a regular, structurally valid image and
+- [x] 02.3 For existing files, require a regular, structurally valid image and
   compare recorded size when available. A missing/truncated file becomes planned
   work. Honor the requested target path and resolution rather than allowing an
   unrelated catalog entry to suppress a requested output. Reconcile valid orphan
   files into the catalog. Document any schema additions and read old entries.
-- [ ] 02.4 Keep same-directory atomic replacement, use uniquely created temporary
+- [x] 02.4 Keep same-directory atomic replacement, use uniquely created temporary
   files, and remove owned partial files on failure. Preserve a previously valid
   destination when overwrite/download fails. Convert expected filesystem failures
   into explicit results; stop on systemic failures such as a full output disk.
-- [ ] 02.5 Checkpoint catalog updates after each saved file for the current small
+- [x] 02.5 Checkpoint catalog updates after each saved file for the current small
   workload. Handle the crash window between image replacement and catalog save
   by reconciling on the next plan. If checkpointing fails, retain the image and
   report the run incomplete. File-save events must distinguish image saved from
   metadata persisted. Defer the shared persistence helper to PR 05.
-- [ ] 02.6 Preserve structured HTTP failure information, including status where
+- [x] 02.6 Preserve structured HTTP failure information, including status where
   available, without retaining arbitrary response bodies in diagnostics. Add a
   small configurable retry limit/backoff for explicitly transient read failures.
   Do not retry permanent errors or known camera "moment unavailable" responses
   just because they use HTTP 500. Never apply transfer retries to destructive RPCs.
-- [ ] 02.7 Check cancellation between planning calls, retries, and files. Define
+- [x] 02.7 Check cancellation between planning calls, retries, and files. Define
   cancellation lifetime explicitly so `run()` does not silently discard a cancel
   issued after planning. Keep the documented current-file boundary; do not claim
   immediate interruption of blocking HTTP. Avoid starting Wi-Fi for cancelled work.
-- [ ] 02.8 Make cleanup execute after every successful SoftAP acquisition, including
+- [x] 02.8 Make cleanup execute after every successful SoftAP acquisition, including
   early preview/setup failure. Preserve primary and cleanup errors separately.
   PR 04 will provide concrete NetworkManager restoration behavior.
-- [ ] 02.9 Update CLI sync immediately to return nonzero for partial/failed results
+- [x] 02.9 Update CLI sync immediately to return nonzero for partial/failed results
   and represent failures without inspecting error strings. PR 06 documents and
   normalizes the full CLI schema. Update sync examples and recovery documentation.
 
 Validation:
 
-- [ ] Empty, truncated, incorrectly wrapped, structurally malformed, and valid
+- [x] Empty, truncated, incorrectly wrapped, structurally malformed, and valid
   synthetic images produce the expected saved/failed outcomes.
-- [ ] Missing, wrong-sized, wrong-resolution, changed-layout, and orphan files
+- [x] Missing, wrong-sized, wrong-resolution, changed-layout, and orphan files
   are handled correctly; successful reruns download only required work.
-- [ ] Inject failure at write, replace, catalog save, and cleanup boundaries.
+- [x] Inject failure at write, replace, catalog save, and cleanup boundaries.
   Previous valid destinations survive, partial files are handled, and a new
   Syncer process can recover saved files after interruption.
-- [ ] Failed session enumeration remains visible even if another session succeeds;
+- [x] Failed session enumeration remains visible even if another session succeeds;
   all-listing-failed and partially-downloaded runs return nonzero in the CLI.
-- [ ] Transient retries stop at the configured budget; permanent errors are not
+- [x] Transient retries stop at the configured budget; permanent errors are not
   retried; cancellation interrupts backoff and prevents new transfers.
-- [ ] Progress order and result totals agree, including cancellation and no-op runs.
+- [x] Progress order and result totals agree, including cancellation and no-op runs.
 - [ ] Hardware check: capture/cover cycle/complete/sync, rerun, and interrupted
   download recovery. Keep all resulting camera photos outside repository evidence.
+  Untested here (no camera present).
 
 Completion: completed files and catalog state reconcile after tested failures,
 and partial work cannot report full success. Compatibility: document stronger

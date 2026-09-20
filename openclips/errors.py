@@ -31,3 +31,26 @@ class UnsafeRequest(CameraError):
 
 class WifiError(CameraError):
     """The host could not join the camera's SoftAP."""
+
+
+class HttpError(CameraError):
+    """HTTP media fetch failed. ``status`` is set when the camera answered.
+
+    The message never includes response bodies. ``retryable`` is True only for
+    explicitly transient network/gateway failures, not HTTP 500 "moment
+    unavailable" responses.
+    """
+
+    def __init__(self, path: str, status: int | None = None, *, retryable: bool = False):
+        self.path = path
+        self.status = status
+        self.retryable = retryable
+        if status is None:
+            msg = f"HTTP request to {path} failed"
+        else:
+            msg = f"HTTP {status} on {path}"
+        super().__init__(msg)
+
+
+class StorageError(CameraError):
+    """Local disk failed in a way that should stop the rest of a sync."""
