@@ -527,4 +527,4 @@ Update this table as work is completed; never mark a task done based on a plan.
 | 03 | GitHub PR open (not merged) | [#6](https://github.com/kengggg/openclips/pull/6) `pr-03-async-lifecycle` | Offline FakeLens/fake scanner/fake Bleak/reap tests. Hardware long-session/reconnect: **untested**. Bleak on macOS/Windows unvalidated. |
 | 04 | GitHub PR open (not merged) | [#7](https://github.com/kengggg/openclips/pull/7) `pr-04-wifi-restore` | Mocked nmcli tests. Hardware join/restore/keep-network: **untested**. |
 | 05 | GitHub PR open (not merged) | [#8](https://github.com/kengggg/openclips/pull/8) `pr-05-persistence` | Offline store/catalog lock/repr tests. No real pairing store used. POSIX 0600; Windows ACL not claimed. |
-| 06 | Planned | — | Baseline and implementation pending |
+| 06 | GitHub PR open (not merged) | [#9](https://github.com/kengggg/openclips/pull/9) `pr-06-cli-contracts` | Offline CLI JSON/exit tests, encode/help/version consumer. Hardware: **untested**. |
