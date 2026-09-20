@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Pairing credentials and captured media must never be committed
+pairings.json
+*.pem
+clips/
+*.jpg
+*.jpeg
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

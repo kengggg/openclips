@@ -1,0 +1,211 @@
+// BLE control protocol of the Google Clips camera (firmware 1.8), as
+// observed on the wire and validated live from Linux. Written by the
+// openclips project; field names are ours.
+//
+// Wire form: every ATT value is  varint(len) || body.  Body is a plaintext
+// Request/Response in setup mode and AES-EAX(ciphertext || tag12) once the
+// secure channel is up (see docs/PROTOCOL.md).
+//
+// The outer Request uses the RequestType number as the field number. The
+// Response uses RequestType + 1. Sequence numbers live in Request.38 and
+// echo in Response.40. Only the messages the library needs are described.
+
+syntax = "proto2";
+
+package openclips;
+
+enum RequestType {
+  PUBLIC_QUERY = 1;
+  PRIVATE_QUERY = 2;
+  KEEP_ALIVE = 3;
+  INITIATE_PAIRING = 4;
+  CANCEL_PAIRING = 5;
+  INITIATE_SECURE_CONNECTION = 6;
+  COMPLETE_SECURE_CONNECTION = 7;
+  SET_UPDATE_REQUIRED = 8;
+  INITIATE_WIFI = 9;
+  CANCEL_WIFI = 10;
+  LIST_SESSIONS = 11;
+  LIST_MOMENTS = 12;
+  GET_PLACEHOLDER_IMAGE = 13;
+  DELETE_MOMENTS = 14;
+  GET_FLAGS = 17;
+  SHUTDOWN = 19;
+  DELETE_SESSION = 20;
+  COMPLETE_CURRENT_SESSION = 21;
+  SET_SESSION_MODE = 22;            // do not send: guessed payloads stall the camera
+  INITIATE_CAPTURE_PREVIEW = 27;
+  CANCEL_CAPTURE_PREVIEW = 28;
+  SET_COVER_STATE = 29;
+  FLASH_IDENTIFY_LEDS = 35;
+  GET_SYSTEM_LOGS = 36;             // do not send: wedges the receive path
+  TRIGGER_CAPTURE = 37;             // always FAILURE on 1.8
+  ECHO = 39;
+  ACK_NEW_CONTENT = 40;             // do not send: poisoned a live link
+  GET_PREFERENCES = 41;
+  SET_PREFERENCES = 42;             // carries shutter events
+  MOVE_MOMENTS_TO_TRASH = 49;
+  RESTORE_MOMENTS_FROM_TRASH = 50;
+  ACTIVE_USER_SETTINGS = 51;
+  DISABLE_CONNECTION_TIMEOUTS = 2048;
+}
+
+enum Status {
+  STATUS_UNKNOWN = 0;
+  SUCCESS = 1;
+  FAILURE = 2;
+}
+
+message GenericStatus {
+  optional Status status = 1;
+}
+
+// ---- setup / handshake ------------------------------------------------------
+
+message PublicQueryRequest {          // setup mode only
+  optional uint64 request_id = 1;
+  optional uint32 protocol_version = 2;   // 26
+}
+
+message InitiatePairingRequest {
+  optional uint32 one = 1;                // always 1
+  optional bytes host_public_key = 2;     // P-256 X||Y, 64 bytes
+  optional string host_name = 3;
+}
+
+message InitiatePairingResponse {
+  optional Status status = 1;
+  optional bytes lens_public_key = 3;     // P-256 X||Y, 64 bytes
+}
+
+message InitiateSecureConnectionRequest {
+  optional bytes app_nonce = 1;           // 16 bytes
+}
+
+message InitiateSecureConnectionResponse {
+  optional Status status = 1;
+  optional bytes lens_nonce = 2;          // 16 bytes
+  optional bytes lens_proof = 3;          // HMAC-SHA256(pairing_key, 0x02||app||lens)
+}
+
+message CompleteSecureConnectionRequest {
+  optional bytes app_proof = 1;           // HMAC-SHA256(pairing_key, 0x01||app||lens)
+  optional int32 device_id = 2;
+}
+
+message PrivateQueryRequest {            // time sync
+  optional fixed64 unix_millis = 1;
+}
+
+// ---- settings ----------------------------------------------------------------
+
+message SetUpdateRequiredRequest {
+  optional bool update_required = 1;      // send false or capture never starts
+}
+
+message ActiveUserSettingsRequest {
+  optional bool active = 1;
+  optional string username = 2;
+  optional int32 device_id = 3;
+}
+
+enum ShutterEvent {
+  SHUTTER_UNKNOWN = 0;
+  SHUTTER_PRESSED = 1;
+  SHUTTER_RELEASED = 2;
+}
+
+message ShutterRequest {                 // RequestType 42; always send both events
+  optional ShutterEvent event = 1;
+}
+
+message SetCoverStateRequest {
+  optional bool open = 1;                 // notification only; not the capture trigger
+}
+
+// ---- Wi-Fi ----------------------------------------------------------------------
+
+message InitiateWifiRequest {
+  optional bool wifi_direct = 1;          // 0 in paired mode
+  optional bool capture_preview = 2;      // 1 opens the SoftAP
+}
+
+message InitiateWifiResponse {
+  optional Status status = 1;
+  optional string ssid = 2;               // "Clips6013"
+  optional string passphrase = 3;         // 16 bytes
+  optional string http_address = 4;       // "http://192.168.49.10:8080"
+  optional uint32 mode = 5;
+}
+
+// ---- sessions and moments ------------------------------------------------------
+
+message ListSessionsRequest {
+  optional fixed64 newer_than = 1;
+  optional uint32 max_count = 2;
+}
+
+message ListSessionsResponse {
+  optional Status status = 1;
+  optional bytes session_ids = 2;         // concatenated 8-byte little-endian ids
+  optional uint64 open_session = 3;
+}
+
+message ListMomentsRequest {
+  optional fixed64 session_id = 1;        // NOT a timestamp; 0 returns nothing
+  optional bool include_all = 2;
+  optional bool include_timestamps = 3;
+  optional bool include_scores = 4;
+  optional bool include_triage = 5;
+  optional bool include_filter = 6;
+}
+
+message ListMomentsResponse {
+  optional Status status = 1;
+  repeated int32 moment_ids = 2 [packed = true];
+  optional bool is_final = 3;
+  optional int32 best_cutoff = 4;
+  // fields 5.. carry per-moment timestamps / scores when requested
+}
+
+message GetPlaceholderImageRequest {    // BLE returned no image bytes on 1.8
+  optional fixed64 session_id = 1;
+  optional uint32 moment_id = 2;
+}
+
+message PackedMomentIds {
+  optional fixed64 session_id = 1;
+  repeated int32 moment_ids = 2 [packed = true];
+}
+
+message DeleteMomentsRequest {          // same shape for trash / restore
+  optional PackedMomentIds moments = 1;
+}
+
+// ---- state notifications --------------------------------------------------------
+// The CSC response and later async Responses repeat field 1 with one entry
+// of this oneof each.
+
+message StateEntry {
+  oneof kind {
+    Battery battery = 1;
+    Activity activity = 2;
+    Session session = 3;
+    Storage storage = 4;
+    SessionMode session_mode = 5;
+    Cover cover = 9;
+    Occlusion occlusion = 10;
+    Wifi wifi = 13;
+    ActiveUser active_user = 100;
+  }
+}
+
+message Battery { optional uint32 percent = 1; optional uint32 charge_state = 2; }
+message Activity { optional uint32 system_state = 1; }   // 2 IDLE, 3 SETUP, 4 CAPTURE
+message Session { optional uint64 uuid = 1; }
+message Storage { optional uint32 level = 1; optional uint32 state = 2; }
+message SessionMode { optional uint32 mode = 1; }        // 1 NORMAL
+message Cover { optional bool cover_open = 1; }
+message Occlusion { optional uint32 state = 1; }
+message Wifi { optional uint32 state = 1; }               // 2 starting, 3 ready, 6 GO timeout
+message ActiveUser { optional int32 device_id = 2; }

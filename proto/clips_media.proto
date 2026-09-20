@@ -1,0 +1,38 @@
+// HTTP media API of the Google Clips camera, served on the camera's SoftAP
+// at http://192.168.49.10:8080 after INITIATE_WIFI. Bodies are raw protobuf
+// sent with POST; no Content-Type is needed. Written by the openclips
+// project from live-validated requests.
+
+syntax = "proto2";
+
+package openclips;
+
+enum Resolution {
+  RESOLUTION_UNKNOWN = 0;
+  RESOLUTION_FULL = 1;    // JFIF, roughly 16-21 MB on 1.8
+  RESOLUTION_THUMB = 2;   // may answer 500 "Moment content not present."
+}
+
+message MomentId {
+  optional uint64 session_id = 1;   // varint here, fixed64 on BLE
+  optional uint32 moment_id = 2;
+}
+
+message FetchMomentRequest {        // POST /fetch_moment
+  optional MomentId moment = 1;
+  optional Resolution resolution = 2;
+  optional uint64 offset = 3;       // optional byte range
+  optional uint64 length = 4;
+}
+
+message FetchMomentMetadataRequest { // POST /fetch_moment_metadata
+  optional MomentId moment = 1;
+}
+
+message FetchFrameRequest {         // POST /fetch_frame
+  optional MomentId moment = 1;
+}
+
+// GET /lens_version  -> { 2: build_number }
+// GET /preview_header -> 44-byte metadata { 3: width, 4: height, ... }
+// GET /keep_alive    -> 200 empty

@@ -1,0 +1,175 @@
+"""GATT identifiers, RPC type numbers and enums for the Google Clips camera."""
+
+from __future__ import annotations
+
+import uuid
+
+# --- BLE -------------------------------------------------------------------
+
+#: Manufacturer-specific data company ID in advertisements (0x00E0). Byte 0
+#: bit 0 of the payload is ``setup_bit`` (1 = unpaired setup window).
+MANUFACTURER_ID = 224
+
+SERVICE_UUID = uuid.UUID("00000003-0003-1000-8000-001A11000100")
+WRITE_UUID = uuid.UUID("00010001-0003-1000-8000-001A11000100")
+INDICATE_UUID = uuid.UUID("80010001-0003-1000-8000-001A11000100")
+
+#: ATT handles observed on firmware 1.8 (used by the btgatt-client adapter).
+WRITE_HANDLE = 0x0009
+INDICATE_HANDLE = 0x000C
+
+#: Largest ATT MTU the sidecar accepts. Only single Write Requests work.
+ATT_MTU = 512
+
+#: Protocol version the last Android app release announced in PUBLIC_QUERY.
+PROTO_VER = 26
+
+#: Default HTTP base once the camera's SoftAP is joined.
+HTTP_DEFAULT = "http://192.168.49.10:8080"
+
+#: Outer Request field carrying the sequence number; Response echoes it here.
+SEQ_FIELD = 38
+SEQ_ECHO_FIELD = 40
+
+# --- Request types (outer Request field number == type) ---------------------
+
+RT_PUBLIC_QUERY = 1
+RT_PRIVATE_QUERY = 2
+RT_KEEP_ALIVE = 3
+RT_INITIATE_PAIRING = 4
+RT_CANCEL_PAIRING = 5
+RT_ISC = 6  # INITIATE_SECURE_CONNECTION
+RT_CSC = 7  # COMPLETE_SECURE_CONNECTION
+RT_SET_UPDATE_REQUIRED = 8
+RT_INITIATE_WIFI = 9
+RT_CANCEL_WIFI = 10
+RT_LIST_SESSIONS = 11
+RT_LIST_MOMENTS = 12
+RT_GET_PLACEHOLDER = 13
+RT_DELETE_MOMENTS = 14
+RT_GET_FLAGS = 17
+RT_SHUTDOWN = 19
+RT_DELETE_SESSION = 20
+RT_COMPLETE_SESSION = 21
+RT_SET_SESSION_MODE = 22
+RT_CAPTURE_PREVIEW = 27
+RT_CANCEL_CAPTURE_PREVIEW = 28
+RT_SET_COVER = 29
+RT_FLASH_IDENTIFY_LEDS = 35
+RT_GET_SYSTEM_LOGS = 36
+RT_TRIGGER_CAPTURE = 37
+RT_ECHO = 39
+RT_ACK_NEW_CONTENT = 40
+RT_GET_PREFERENCES = 41
+RT_SHUTTER = 42  # SET_PREFERENCES in the app enum; carries shutter events
+RT_MOVE_TO_TRASH = 49
+RT_RESTORE_FROM_TRASH = 50
+RT_ACTIVE_USER = 51
+RT_DISABLE_TIMEOUTS = 2048
+
+REQUEST_NAMES = {
+    RT_PUBLIC_QUERY: "PUBLIC_QUERY",
+    RT_PRIVATE_QUERY: "PRIVATE_QUERY",
+    RT_KEEP_ALIVE: "KEEP_ALIVE",
+    RT_INITIATE_PAIRING: "INITIATE_PAIRING",
+    RT_CANCEL_PAIRING: "CANCEL_PAIRING",
+    RT_ISC: "INITIATE_SECURE_CONNECTION",
+    RT_CSC: "COMPLETE_SECURE_CONNECTION",
+    RT_SET_UPDATE_REQUIRED: "SET_UPDATE_REQUIRED",
+    RT_INITIATE_WIFI: "INITIATE_WIFI",
+    RT_CANCEL_WIFI: "CANCEL_WIFI",
+    RT_LIST_SESSIONS: "LIST_SESSIONS",
+    RT_LIST_MOMENTS: "LIST_MOMENTS",
+    RT_GET_PLACEHOLDER: "GET_PLACEHOLDER_IMAGE",
+    RT_DELETE_MOMENTS: "DELETE_MOMENTS",
+    RT_GET_FLAGS: "GET_FLAGS",
+    RT_SHUTDOWN: "SHUTDOWN",
+    RT_DELETE_SESSION: "DELETE_SESSION",
+    RT_COMPLETE_SESSION: "COMPLETE_CURRENT_SESSION",
+    RT_SET_SESSION_MODE: "SET_SESSION_MODE",
+    RT_CAPTURE_PREVIEW: "INITIATE_CAPTURE_PREVIEW",
+    RT_CANCEL_CAPTURE_PREVIEW: "CANCEL_CAPTURE_PREVIEW",
+    RT_SET_COVER: "SET_COVER_STATE",
+    RT_FLASH_IDENTIFY_LEDS: "FLASH_IDENTIFY_LEDS",
+    RT_GET_SYSTEM_LOGS: "GET_SYSTEM_LOGS",
+    RT_TRIGGER_CAPTURE: "TRIGGER_CAPTURE",
+    RT_ECHO: "ECHO",
+    RT_ACK_NEW_CONTENT: "ACK_NEW_CONTENT",
+    RT_GET_PREFERENCES: "GET_PREFERENCES",
+    RT_SHUTTER: "SET_PREFERENCES",
+    RT_MOVE_TO_TRASH: "MOVE_MOMENTS_TO_TRASH",
+    RT_RESTORE_FROM_TRASH: "RESTORE_MOMENTS_FROM_TRASH",
+    RT_ACTIVE_USER: "ACTIVE_USER_SETTINGS",
+    RT_DISABLE_TIMEOUTS: "DISABLE_CONNECTION_TIMEOUTS",
+}
+
+#: Requests that are known to wedge or poison a live link. Never send them.
+UNSAFE_REQUESTS = frozenset({RT_ACK_NEW_CONTENT, RT_GET_SYSTEM_LOGS, RT_SET_SESSION_MODE})
+
+
+def response_field(rtype: int) -> int:
+    """Response messages carry the payload in field ``request type + 1``."""
+    return rtype + 1
+
+
+# --- Enums -------------------------------------------------------------------
+
+STATUS_UNKNOWN = 0
+STATUS_SUCCESS = 1
+STATUS_FAILURE = 2
+
+SHUTTER_PRESSED = 1
+SHUTTER_RELEASED = 2
+
+RESOLUTION_UNKNOWN = 0
+RESOLUTION_FULL = 1
+RESOLUTION_THUMB = 2
+
+SYSTEM_STATE = {
+    0: "UNKNOWN",
+    1: "INITIALIZING",
+    2: "IDLE",
+    3: "SETUP",
+    4: "CAPTURE",
+    5: "CLOUD_UPLOAD",
+    6: "SHUTDOWN",
+    7: "STORAGE_LOCK",
+    8: "CAPTURE_SUSPENDED",
+    9: "EXIT_CAPTURE",
+}
+SYSTEM_STATE_IDLE = 2
+SYSTEM_STATE_SETUP = 3
+SYSTEM_STATE_CAPTURE = 4
+
+STORAGE_STATE = {0: "UNKNOWN", 1: "OK", 2: "LOW", 3: "CRITICAL"}
+CHARGE_STATE = {
+    0: "UNKNOWN",
+    1: "DISCHARGING",
+    2: "CHARGING",
+    3: "FULL_EXTERNAL_POWER",
+    4: "EXTERNAL_POWER",
+    5: "FULL_NO_EXTERNAL_POWER",
+}
+OCCLUSION = {0: "UNKNOWN", 1: "CLEARED", 2: "OCCLUDED", 3: "LONG_OCCLUDED"}
+SESSION_MODE = {0: "UNKNOWN", 1: "NORMAL", 2: "LARP", 3: "POINT_AND_SHOOT"}
+WIFI_STATE = {2: "STARTING", 3: "READY", 6: "GROUP_OWNER_TIMEOUT"}
+
+#: Field numbers inside a state-notification bundle (the ``oneof`` the CSC
+#: response repeats in field 1, and later async notifications).
+NOTIFICATION_KIND = {
+    1: "BATTERY",
+    2: "ACTIVITY",
+    3: "SESSION",
+    4: "STORAGE",
+    5: "SESSION_MODE",
+    6: "CLOUD",
+    7: "ANALYSIS",
+    8: "NEW_MOMENT",
+    9: "COVER",
+    10: "OCCLUSION",
+    11: "THROTTLE",
+    12: "MANUAL_CAPTURE",
+    13: "WIFI",
+    16: "ACTIVE_USER",
+    100: "ACTIVE_USER_CHANGED",
+}

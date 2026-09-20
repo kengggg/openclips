@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openclips"
+version = "0.1.0"
+description = "Open-source host client for the discontinued Google Clips camera: pair over BLE, control capture, download photos."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Keng Susumpow" }]
+keywords = ["google-clips", "camera", "bluetooth", "ble", "reverse-engineering", "preservation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Multimedia :: Graphics :: Capture :: Digital Camera",
+  "Topic :: System :: Hardware",
+]
+dependencies = ["pycryptodome>=3.18"]
+
+[project.optional-dependencies]
+ble = ["bleak>=0.21"]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+openclips = "openclips.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/kengggg/openclips"
+Documentation = "https://github.com/kengggg/openclips/blob/main/docs/PROTOCOL.md"
+Issues = "https://github.com/kengggg/openclips/issues"
+
+[tool.setuptools.packages.find]
+include = ["openclips*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["research"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["B011"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "E501"]
