@@ -6,6 +6,10 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Packaging build check, Python 3.14 in CI, coverage, Dependabot, release and
+  PyPI publish workflows, pre-commit config, CITATION.cff.
+
 ## [0.1.0] - 2026-09-20
 
 First public release. Everything below is validated live against a GC-6013

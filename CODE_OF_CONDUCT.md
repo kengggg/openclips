@@ -11,5 +11,6 @@ This is a small hobby project run by volunteers who like old hardware.
 * Maintainers may edit, lock or remove content and may block contributors
   who repeatedly break these rules.
 
-If something happened that you want a maintainer to look at, contact the
-maintainer listed in `pyproject.toml`.
+If something happened that you want a maintainer to look at, open a
+private security advisory on the repository (it reaches only the
+maintainer) or mention @kengggg in the thread.

@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software or the protocol documentation, please cite it."
+title: "openclips: an open host client and protocol description for the Google Clips camera"
+type: software
+authors:
+  - family-names: Susumpow
+    given-names: Keng
+repository-code: "https://github.com/kengggg/openclips"
+license: MIT
+version: 0.1.0
+date-released: 2026-09-20
+keywords:
+  - google-clips
+  - bluetooth-low-energy
+  - reverse-engineering
+  - hardware-preservation

@@ -24,6 +24,12 @@ If you think a key leaked: factory-reset the camera (pinhole 15 s), run
 ## Reporting a vulnerability in openclips
 
 Please do not open a public issue for anything that would let a third party
-read a user's photos or take over a camera. Email the maintainer listed in
-`pyproject.toml` or use GitHub's private vulnerability reporting on the
-repository. You should hear back within a week.
+read a user's photos or take over a camera. Use GitHub's private
+vulnerability reporting instead:
+<https://github.com/kengggg/openclips/security/advisories/new>. You should
+hear back within a week. Fixes are released as a new version with a note in
+`CHANGELOG.md`; credit is given unless you ask otherwise.
+
+## Supported versions
+
+Only the latest release receives fixes.

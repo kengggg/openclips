@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -31,7 +31,7 @@ dependencies = ["pycryptodome>=3.18"]
 
 [project.optional-dependencies]
 ble = ["bleak>=0.21"]
-dev = ["pytest>=7", "ruff>=0.4"]
+dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.4", "pre-commit>=3"]
 
 [project.scripts]
 openclips = "openclips.cli:main"

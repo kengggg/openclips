@@ -1,5 +1,9 @@
 # openclips
 
+[![CI](https://github.com/kengggg/openclips/actions/workflows/ci.yml/badge.svg)](https://github.com/kengggg/openclips/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 Open-source host client for the **Google Clips** camera (GC-6013, 2018).
 Google shut the companion app down; this project lets you keep using the
 camera from a Linux machine, and documents the protocol so anyone can port
@@ -30,12 +34,14 @@ account, no Google services.
 
 ## Install
 
-```
-pip install openclips            # library + CLI
-pip install 'openclips[ble]'     # adds bleak for `openclips scan` and non-Linux BLE
-```
+Until the first PyPI release, install from a checkout:
 
-From a checkout: `pip install -e '.[dev]'`.
+```
+git clone https://github.com/kengggg/openclips
+cd openclips
+pip install -e .            # library + CLI
+pip install -e '.[ble]'     # adds bleak for `openclips scan` and non-Linux BLE
+```
 
 ## Quick start
 

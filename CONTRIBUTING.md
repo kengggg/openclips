@@ -23,9 +23,15 @@ git clone https://github.com/kengggg/openclips
 cd openclips
 python -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev,ble]'
-pytest
+pre-commit install          # ruff + hygiene hooks on every commit
+pytest --cov=openclips
 ruff check . && ruff format .
 ```
+
+CI runs lint, the test matrix (Python 3.10 to 3.14) and a packaging build
+on every push and pull request. Releases are cut by pushing a `v*` tag
+that matches the version in `pyproject.toml`; the Release workflow builds
+the artifacts and drafts the GitHub release from `CHANGELOG.md`.
 
 The test suite runs entirely offline against `tests/fake_lens.py`, an
 in-process camera that speaks the real wire format including the
