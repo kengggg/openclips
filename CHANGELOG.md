@@ -74,6 +74,9 @@ not just the CLI. See `docs/LIBRARY.md`.
 - Pairing and catalog files are written 0600 via exclusive temps with
   interprocess locks and revision checks. Malformed stores are left on
   disk. Pairing keys and Wi-Fi passphrases are redacted from repr.
+- CLI JSON/exit contracts: stable `downloaded` lists, `watch --json` JSON
+  Lines, `capture --wait` nonzero if CAPTURE is not reached, `delete
+  --trash` refused before connect, `--moments` requires `--session`.
 
 ## [0.1.0] - 2026-09-20
 

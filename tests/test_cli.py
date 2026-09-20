@@ -76,8 +76,16 @@ def test_status_uses_single_stored_pairing(store, fake, capsys):
 
 def test_unpaired_address_is_an_error(store, fake, capsys):
     fake["factory"] = lambda addr: FakeLens()
-    with pytest.raises(SystemExit):
-        cli.main(["-a", "11:22:33:44:55:66", "status"])
+    rc, out, err = run(capsys, "-a", "11:22:33:44:55:66", "status")
+    assert rc == cli.EXIT_CAMERA
+    assert "not paired" in err
+
+
+def test_missing_address_is_usage_error(store, fake, capsys):
+    fake["factory"] = lambda addr: FakeLens()
+    rc, out, err = run(capsys, "status")
+    assert rc == cli.EXIT_USAGE
+    assert "no camera address" in err
 
 
 def test_sessions_moments_delete(store, fake, capsys):
@@ -200,6 +208,60 @@ def test_sync_partial_failure_is_nonzero(store, fake, capsys, tmp_path, monkeypa
     assert rc == cli.EXIT_PARTIAL
     data = json.loads(out)
     assert len(data["downloaded"]) == 1 and len(data["failed"]) == 1
+
+
+def test_scan_without_bleak_prints_install_hint(monkeypatch, capsys):
+    import openclips.scan as scan_mod
+
+    def boom(timeout=8.0):
+        raise ImportError("pip install 'openclips[ble]' to scan")
+
+    monkeypatch.setattr(scan_mod, "scan", boom)
+    rc, out, err = run(capsys, "scan")
+    assert rc == cli.EXIT_CAMERA
+    assert "openclips[ble]" in err
+
+
+def test_delete_trash_fails_before_connect(store, fake, capsys):
+    fake["factory"] = lambda addr: (_ for _ in ()).throw(AssertionError("must not connect"))
+    rc, out, err = run(capsys, "delete", "--trash", str(SID), "1")
+    assert rc == cli.EXIT_USAGE
+    assert "unsupported" in err
+
+
+def test_sync_moments_requires_session(capsys):
+    rc, out, err = run(capsys, "sync", "--moments", "1,2")
+    assert rc == cli.EXIT_USAGE
+    assert "--session" in err
+
+
+def test_bad_moment_ids_are_usage_error(capsys):
+    with pytest.raises(SystemExit) as ei:
+        cli.main(["encode", "--session", "1", "--moments", "nope"])
+    assert ei.value.code == 2
+
+
+def test_capture_wait_nonzero_if_not_capture(store, fake, capsys):
+    key = b"\x0e" * 32
+    s = PairingStore(store)
+    s.put(Pairing("AA:BB:CC:DD:EE:FF", key))
+    s.save()
+    fake["factory"] = lambda addr: FakeLens(pairing_key=key)
+    rc, out, err = run(capsys, "capture", "--wait", "1")
+    assert rc == cli.EXIT_CAMERA
+    assert "did not enter CAPTURE" in out
+
+
+def test_watch_json_is_one_object(store, fake, capsys):
+    key = b"\x0f" * 32
+    s = PairingStore(store)
+    s.put(Pairing("AA:BB:CC:DD:EE:FF", key))
+    s.save()
+    fake["factory"] = lambda addr: FakeLens(pairing_key=key)
+    rc, out, err = run(capsys, "--json", "watch", "--duration", "0.05")
+    assert rc == 0
+    first = json.loads(out.strip().splitlines()[0])
+    assert first["event"] == "initial" and "state" in first
 
 
 def test_watch_prints_state_changes(store, fake, capsys):
