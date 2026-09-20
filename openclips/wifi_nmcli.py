@@ -156,8 +156,12 @@ def join_nmcli(
     log=None,
     *,
     profile_name: str | None = None,
-) -> str | None:
-    """Create/up an owned camera profile. Returns the profile UUID or None."""
+) -> tuple[str | None, bool]:
+    """Create an owned camera profile and try to bring it up.
+
+    Returns ``(uuid, connected)``. ``uuid`` is set as soon as ``connection add``
+    succeeds so the caller can delete the profile if ``connection up`` fails.
+    """
     iface = iface or detect_wifi_iface()
     if not iface:
         raise WifiError("no Wi-Fi interface found via nmcli")
@@ -203,13 +207,13 @@ def join_nmcli(
                 stage="connection-up",
             )
             if up.ok:
-                return owned
+                return owned, True
             (log or logger.info)("join attempt %s failed rc=%s", attempt + 1, up.rc)
             rem = deadline - time.monotonic()
             if rem <= 0:
                 break
             time.sleep(min(1.5, rem))
-        return None
+        return owned, False
     finally:
         try:
             os.unlink(psk_path)
@@ -276,11 +280,11 @@ class NmcliWifi:
         if not wait_for_ssid(creds.ssid, iface, timeout=self.scan_timeout):
             logger.error("camera SSID never appeared")
             return False
-        owned = join_nmcli(creds, iface)
-        if not owned:
+        owned, connected = join_nmcli(creds, iface)
+        self.owned_uuid = owned
+        if not owned or not connected:
             self.leave()
             return False
-        self.owned_uuid = owned
         return True
 
     def leave(self) -> None:

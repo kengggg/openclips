@@ -77,8 +77,8 @@ def test_join_creates_unique_profile_without_leaking_psk(monkeypatch, caplog):
     monkeypatch.setattr("openclips.wifi_nmcli._run", fake_run)
     monkeypatch.setattr("openclips.wifi_nmcli.uuidlib.uuid4", lambda: type("U", (), {"hex": "deadbeefcafebabe"})())
     creds = WifiCredentials("Clips6013", SENTINEL)
-    uid = join_nmcli(creds, iface="wlan0", timeout=5, retries=1)
-    assert uid == "11111111-2222-3333-4444-555555555555"
+    uid, connected = join_nmcli(creds, iface="wlan0", timeout=5, retries=1)
+    assert connected and uid == "11111111-2222-3333-4444-555555555555"
     add = next(a for a in seen if a[:3] == ["nmcli", "connection", "add"])
     assert PROFILE_PREFIX_IN_ADD(add)
     text = caplog.text + str(WifiError("could not create camera Wi-Fi profile"))
@@ -169,3 +169,43 @@ def test_does_not_delete_unrelated_ssid_profile(monkeypatch):
     delete = [a for a in seen if "delete" in a]
     assert delete and "Clips6013" not in delete[0]
     assert "owned-uuid-000000000000000000000000000" in delete[0]
+
+
+def test_partial_join_deletes_owned_profile(monkeypatch):
+    """add succeeds, connection up fails: leave() still deletes the UUID."""
+    seen = []
+    clock = {"t": 0.0}
+    monkeypatch.setattr("openclips.wifi_nmcli.time.monotonic", lambda: clock["t"])
+    monkeypatch.setattr("openclips.wifi_nmcli.time.sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    monkeypatch.setattr("openclips.wifi_nmcli.uuidlib.uuid4", lambda: type("U", (), {"hex": "deadbeefcafebabe"})())
+
+    def fake_run(args, timeout=20, stage="nmcli"):
+        seen.append(list(args))
+        clock["t"] += 0.2
+        if args[:3] == ["nmcli", "connection", "add"]:
+            return NmcliResult(0, "")
+        if "NAME,UUID" in args:
+            return NmcliResult(0, "openclips-deadbeef:11111111-2222-3333-4444-555555555555\n")
+        if args[:3] == ["nmcli", "connection", "up"]:
+            return NmcliResult(1, "", "fail")
+        if "list" in args or "rescan" in args:
+            return NmcliResult(0, "Clips6013\n")
+        if "DEVICE,TYPE" in args:
+            return NmcliResult(0, "wlan0:wifi\n")
+        if "UUID,DEVICE" in args:
+            return NmcliResult(0, "")
+        if "delete" in args:
+            return NmcliResult(0, "")
+        return NmcliResult(0, "")
+
+    monkeypatch.setattr("openclips.wifi_nmcli._run", fake_run)
+    creds = WifiCredentials("Clips6013", SENTINEL)
+    uid, connected = join_nmcli(creds, iface="wlan0", timeout=2, retries=1)
+    assert uid == "11111111-2222-3333-4444-555555555555" and connected is False
+
+    w = NmcliWifi(iface="wlan0", scan_timeout=2)
+    assert w.join(creds) is False
+    deletes = [a for a in seen if "delete" in a]
+    assert deletes
+    assert "11111111-2222-3333-4444-555555555555" in deletes[0]
+    assert SENTINEL not in str(deletes)
