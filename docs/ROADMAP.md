@@ -3,6 +3,10 @@
 Where the project stands and what would make it more useful. Issues are
 the place to claim an item.
 
+The [reliability improvement plan](IMPROVEMENT_PLAN.md) breaks the next code
+improvements into six sequential PRs, with implementation tasks, validation,
+compatibility notes, and private-data handling requirements for each.
+
 ## Works today (live-validated)
 
 - Pair in setup mode, store the key, resume later without a reset

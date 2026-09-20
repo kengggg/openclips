@@ -27,8 +27,29 @@ those modules.
 
 `Camera` is **blocking and single-caller**. Every method waits for the
 camera's reply (up to 20 s for a moment listing). Call it from one worker
-thread; never from a GUI thread. The keepalive thread only writes
+thread; never from a GUI thread. Do not overlap `request()` from two
+callers on the same instance. The keepalive thread only writes
 heartbeats and is designed to run alongside your worker.
+
+Encrypted RPCs are correlated by response field **and** sequence echo.
+`request()` returns `None` on timeout; a delayed or buffered reply for an
+older sequence cannot complete a later request of the same type. Missing
+echoes are rejected (no field-only fallback). Unsolicited notifications
+and keepalive replies are handled separately and may be interleaved. A
+field-1 state bundle on the same frame as a matching RPC still updates
+`cam.state` and fires events; the RPC is not absorbed as a notification.
+`resume()` owns CSC state (the handshake bundle is applied there once).
+Stray replies are kept in a bounded pending buffer (16) and cleared on
+`resume()` / `close()`. Discarded-reply logs report types and counts, not
+payloads.
+
+Elapsed waits (`request`, `poll`, `wait_for`, `pair`, `resume`) use a
+monotonic clock, and nested reads receive the remaining budget. Wall-clock
+`time.time()` is only used to set the camera clock (`time_sync` /
+`PRIVATE_QUERY`) and for moment timestamps. Handshake phases have their
+own budgets: `pair` spends 6 s on `PUBLIC_QUERY` then `timeout` on
+`INITIATE_PAIRING`; `resume` spends `timeout` on `ISC` and a fresh
+`timeout` on `CSC`. See `docs/PROTOCOL.md`.
 
 Event callbacks run on the thread that was reading the camera at the time,
 which is your worker. Marshal to the UI thread yourself (Qt signals, GLib
@@ -147,10 +168,15 @@ when idle so notifications flow.
 `tests/fake_lens.py` is a complete in-process camera: setup-mode pairing,
 handshake, encrypted channel, sessions, moments with metadata, Wi-Fi
 credentials, notifications (`push_notification`), link drops
-(`drop_link`) and reconnection (`reopen`). Point `ConnectionManager` at it
-with `transport_factory=lambda addr: lens` and develop the whole UI on a
-laptop. Pair it with `NullWifi` and monkeypatch `Camera.http_post` to feed
-JPEG bytes.
+(`drop_link`) and reconnection (`reopen`). Opt-in helpers
+(`omit_next`, `delay_next`, `duplicate_next`, `emit_before_next`,
+`bundle_next`, `release_held`) can delay, omit, duplicate, interleave, or
+bundle a state entry onto replies; frames
+are encrypted at delivery time so sequence-matching tests are not
+crypto-counter tests. Defaults still reply immediately. Point
+`ConnectionManager` at it with `transport_factory=lambda addr: lens` and
+develop the whole UI on a laptop. Pair it with `NullWifi` and monkeypatch
+`Camera.http_post` to feed JPEG bytes.
 
 ## Logging
 

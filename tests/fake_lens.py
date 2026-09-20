@@ -4,6 +4,10 @@
 requests the way firmware 1.8 does on the wire: plaintext in setup mode,
 ISC/CSC handshake, then an AES-EAX channel where the response field number
 is ``request type + 1`` and the sequence number echoes in field 40.
+
+Encrypted frames are produced at delivery time so AES-EAX counters follow
+the order the host actually reads. Delay / omit / duplicate / interleave
+controls are opt-in; the default path still replies immediately.
 """
 
 from __future__ import annotations
@@ -69,6 +73,13 @@ class FakeLens(Transport):
         self.requests: list[tuple[int, bytes]] = []
         self.closed = False
         self.wifi_open = False
+        # Opt-in reply scheduling. Empty means the immediate-reply happy path.
+        self._omit_types: set[int] = set()
+        self._delay_types: set[int] = set()
+        self._duplicate_types: set[int] = set()
+        self._before: dict[int, list] = {}
+        self._bundle: dict[int, bytes] = {}
+        self._held: list[bytes] = []
 
     # ------------------------------------------------------------ Transport
 
@@ -108,11 +119,77 @@ class FakeLens(Transport):
 
     # ------------------------------------------------------------ helpers
 
+    def omit_next(self, rtype: int) -> None:
+        """Drop the next reply of ``rtype`` (one-shot)."""
+        self._omit_types.add(rtype)
+
+    def delay_next(self, rtype: int) -> None:
+        """Hold the next reply of ``rtype`` as plaintext until :meth:`release_held`."""
+        self._delay_types.add(rtype)
+
+    def duplicate_next(self, rtype: int) -> None:
+        """Encrypt and queue the next reply of ``rtype`` twice, in delivery order."""
+        self._duplicate_types.add(rtype)
+
+    def emit_before_next(self, rtype: int, *frames) -> None:
+        """Encrypt ``frames`` immediately before the next reply of ``rtype``.
+
+        Each item is plaintext bytes, or a ``callable(seq) -> bytes | list[bytes]``.
+        Encryption happens at emit time so counters follow delivery order.
+        """
+        self._before.setdefault(rtype, []).extend(frames)
+
+    def bundle_next(self, rtype: int, extra: bytes) -> None:
+        """Prepend plaintext ``extra`` to the next reply of ``rtype`` before encrypt.
+
+        Used to put a field-1 state bundle on the same frame as an RPC reply.
+        """
+        self._bundle[rtype] = extra
+
+    def release_held(self) -> int:
+        """Encrypt any delayed plaintext replies now and queue them for read."""
+        held, self._held = self._held, []
+        for pt in held:
+            self._emit_enc(pt)
+        return len(held)
+
+    def emit_enc(self, pt: bytes) -> None:
+        """Encrypt plaintext ``pt`` now and queue it. Test helper; encrypt-at-emit."""
+        self._emit_enc(pt)
+
     def _emit_plain(self, pt: bytes) -> None:
         self.out.append(bqs_frame(pt))
 
     def _emit_enc(self, pt: bytes) -> None:
         self.out.append(bqs_frame(self.sess.encrypt(pt)))
+
+    def _schedule_enc(self, rtype: int, seq: int, reply: bytes | None) -> None:
+        for item in self._before.pop(rtype, ()):
+            produced = item(seq) if callable(item) else item
+            if produced is None:
+                continue
+            if isinstance(produced, (bytes, bytearray)):
+                self._emit_enc(bytes(produced))
+            else:
+                for fr in produced:
+                    self._emit_enc(fr)
+        extra = self._bundle.pop(rtype, b"")
+        if extra and reply is not None:
+            reply = extra + reply
+        omit = rtype in self._omit_types
+        delay = rtype in self._delay_types
+        dup = rtype in self._duplicate_types
+        self._omit_types.discard(rtype)
+        self._delay_types.discard(rtype)
+        self._duplicate_types.discard(rtype)
+        if omit or reply is None:
+            return
+        if delay:
+            self._held.append(reply)
+            return
+        self._emit_enc(reply)
+        if dup:
+            self._emit_enc(reply)
 
     def push_notification(self, kind: int, inner: bytes) -> None:
         """Async state notification: Response { 1: { kind: inner } }."""
@@ -162,7 +239,7 @@ class FakeLens(Transport):
             assert proof == app_proof(self.pairing_key, self.app_nonce, self.lens_nonce), "bad app proof"
             self.sess = SecureSession(self.pairing_key, self.app_nonce, self.lens_nonce, role=ROLE_LENS)
             self.setup_mode = False
-            self._emit_enc(self.state_bundle() + _resp(rtype, _status(), seq))
+            self._schedule_enc(rtype, seq, self.state_bundle() + _resp(rtype, _status(), seq))
         else:
             raise AssertionError(f"plaintext request type {rtype} is not allowed")
 
@@ -176,12 +253,9 @@ class FakeLens(Transport):
         self.requests.append((rtype, inner))
         assert rtype not in C.UNSAFE_REQUESTS, f"unsafe request {rtype}"
         h = getattr(self, f"_rt_{rtype}", None)
-        if h is None:
-            self._emit_enc(_resp(rtype, _status(), seq))
-            return
-        resp = h(inner)
-        if resp is not None:
-            self._emit_enc(_resp(rtype, resp, seq))
+        resp = h(inner) if h is not None else _status()
+        reply = None if resp is None else _resp(rtype, resp, seq)
+        self._schedule_enc(rtype, seq, reply)
 
     def _rt_3(self, inner):  # KEEP_ALIVE
         return _status()

@@ -1,5 +1,6 @@
 """End-to-end Camera behaviour against the in-process fake lens."""
 
+import logging
 import os
 import threading
 import time
@@ -8,9 +9,25 @@ import pytest
 from fake_lens import FakeLens, paired_pair
 
 from openclips import constants as C
-from openclips.camera import EVENT_DISCONNECTED, EVENT_NOTIFICATION, EVENT_STATE, Camera, extract_jpeg
+from openclips import proto as P
+from openclips.camera import (
+    EVENT_DISCONNECTED,
+    EVENT_NOTIFICATION,
+    EVENT_STATE,
+    PAIR_PUBLIC_QUERY_BUDGET,
+    PENDING_RESPONSE_LIMIT,
+    Camera,
+    extract_jpeg,
+)
 from openclips.crypto import generate_host_key
-from openclips.errors import CameraAsleep, ConnectionLost, NotPaired, PairingKeyMismatch, UnsafeRequest
+from openclips.errors import (
+    CameraAsleep,
+    ConnectionLost,
+    NotPaired,
+    PairingKeyMismatch,
+    RequestTimeout,
+    UnsafeRequest,
+)
 from openclips.pb import parse_pb, pb_bytes, pb_uint
 
 SID = 1789825799491786000
@@ -268,3 +285,328 @@ def test_start_stop_keepalive_idempotent_and_close_stops_it():
     assert cam._hb_thread is not None
     cam.close()
     assert cam._hb_thread is None and lens.closed
+
+
+# ---------------------------------------------------------------- reply correlation / deadlines
+
+SENTINEL = "SYNTHETIC_SECRET_SENTINEL_9f3a"
+
+
+def _drive_clock(monkeypatch, lens, wall_jump=0.0):
+    """Patch monotonic time and consume a read slice only when the queue is empty.
+
+    Delivered frames return immediately (tiny tick) so draining queued replies is
+    not a crypto-counter or wall-clock test. Empty reads advance the fake clock
+    by the timeout Camera passed, simulating a blocking wait.
+    """
+    clock = {"t": 1000.0}
+    wall = {"offset": 0.0}
+    seen = []
+    real_time = time.time
+    monkeypatch.setattr(time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(time, "time", lambda: real_time() + wall["offset"])
+    orig = lens.read_indication
+
+    def wrapped(timeout=1.0):
+        seen.append(timeout)
+        if len(seen) > 100:
+            raise RuntimeError("too many indication reads; monotonic deadline not applied?")
+        if wall_jump:
+            wall["offset"] += wall_jump
+        result = orig(timeout)
+        if result is None:
+            clock["t"] += max(0.0, float(timeout))
+        else:
+            clock["t"] += 1e-6
+        return result
+
+    lens.read_indication = wrapped
+    return seen, clock, wall
+
+
+def _rpc_reply(rtype: int, seq: int, inner: bytes | None = None) -> bytes:
+    if inner is None:
+        inner = pb_uint(1, C.STATUS_SUCCESS)
+    return pb_bytes(C.response_field(rtype), inner) + pb_uint(C.SEQ_ECHO_FIELD, seq)
+
+
+def test_delayed_reply_does_not_complete_newer_same_type_request(monkeypatch):
+    lens, cam = make_paired(sessions={111: []})
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    lens.delay_next(C.RT_LIST_SESSIONS)
+    assert cam.request(C.RT_LIST_SESSIONS, P.build_list_sessions(), timeout=0.4) is None
+    seq_a = cam._seq
+    lens.sessions = {222: []}
+    assert lens.release_held() == 1
+    pt = cam.request(C.RT_LIST_SESSIONS, P.build_list_sessions(), timeout=2)
+    parsed = P.parse_list_sessions(pt)
+    assert parsed["status"] == C.STATUS_SUCCESS
+    assert parsed["session_ids"] == [222]
+    assert parsed["seq"] == cam._seq != seq_a
+
+
+def test_stale_reply_already_buffered_by_poll_does_not_complete_newer_request(monkeypatch):
+    lens, cam = make_paired(sessions={222: []})
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    packed = (111).to_bytes(8, "little")
+    lens.emit_enc(_rpc_reply(C.RT_LIST_SESSIONS, 999, pb_uint(1, C.STATUS_SUCCESS) + pb_bytes(2, packed)))
+    cam.poll(0.5)
+    assert cam._pending
+    buffered = P.parse_list_sessions(cam._pending[0])
+    assert buffered["session_ids"] == [111]
+    assert buffered["seq"] == 999
+    pt = cam.request(C.RT_LIST_SESSIONS, P.build_list_sessions(), timeout=2)
+    parsed = P.parse_list_sessions(pt)
+    assert parsed["session_ids"] == [222]
+    assert parsed["seq"] == cam._seq != 999
+
+
+def test_wrong_field_matching_echo_does_not_complete_request(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    lens.emit_before_next(
+        C.RT_FLASH_IDENTIFY_LEDS,
+        lambda seq: _rpc_reply(C.RT_LIST_SESSIONS, seq),
+    )
+    lens.omit_next(C.RT_FLASH_IDENTIFY_LEDS)
+    assert cam.request(C.RT_FLASH_IDENTIFY_LEDS, timeout=0.4) is None
+
+
+def test_wrong_sequence_matching_field_does_not_complete_request(monkeypatch):
+    lens, cam = make_paired(sessions={111: []})
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    packed = (111).to_bytes(8, "little")
+    lens.emit_before_next(
+        C.RT_LIST_SESSIONS,
+        lambda seq: _rpc_reply(C.RT_LIST_SESSIONS, seq + 99, pb_uint(1, C.STATUS_SUCCESS) + pb_bytes(2, packed)),
+    )
+    lens.omit_next(C.RT_LIST_SESSIONS)
+    assert cam.request(C.RT_LIST_SESSIONS, P.build_list_sessions(), timeout=0.4) is None
+
+
+def test_absent_echo_matching_field_does_not_complete_request(monkeypatch):
+    lens, cam = make_paired(sessions={111: []})
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    packed = (111).to_bytes(8, "little")
+    lens.emit_before_next(
+        C.RT_LIST_SESSIONS,
+        lambda _seq: pb_bytes(C.response_field(C.RT_LIST_SESSIONS), pb_uint(1, C.STATUS_SUCCESS) + pb_bytes(2, packed)),
+    )
+    lens.omit_next(C.RT_LIST_SESSIONS)
+    assert cam.request(C.RT_LIST_SESSIONS, P.build_list_sessions(), timeout=0.4) is None
+
+
+def test_duplicate_stale_replies_do_not_complete_request(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+
+    def stale(seq):
+        return _rpc_reply(C.RT_LIST_SESSIONS, seq + 7)
+
+    lens.emit_before_next(C.RT_LIST_SESSIONS, stale, stale)
+    lens.omit_next(C.RT_LIST_SESSIONS)
+    assert cam.request(C.RT_LIST_SESSIONS, P.build_list_sessions(), timeout=0.4) is None
+
+
+def test_malformed_reply_does_not_complete_request(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    lens.emit_before_next(C.RT_FLASH_IDENTIFY_LEDS, b"\x00\xffnot-a-protobuf")
+    lens.omit_next(C.RT_FLASH_IDENTIFY_LEDS)
+    assert cam.request(C.RT_FLASH_IDENTIFY_LEDS, timeout=0.4) is None
+
+
+def test_duplicate_matching_reply_still_succeeds_and_keeps_channel_aligned(monkeypatch):
+    lens, cam = make_paired(sessions={SID: [1]})
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    lens.duplicate_next(C.RT_LIST_SESSIONS)
+    s = cam.list_sessions()
+    assert s["status"] == C.STATUS_SUCCESS and SID in s["session_ids"]
+    # leftover duplicate is retired; counters stay aligned
+    assert cam.list_moments(SID)["moment_ids"] == [1]
+
+
+def test_interleaved_notification_and_keepalive_still_return_matching_reply(monkeypatch):
+    lens, cam = make_paired(sessions={SID: [1]})
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    notif = pb_bytes(1, pb_bytes(9, pb_uint(1, 1)))
+    ka = pb_bytes(C.response_field(C.RT_KEEP_ALIVE), pb_uint(1, 1)) + pb_uint(C.SEQ_ECHO_FIELD, 0)
+    lens.emit_before_next(C.RT_LIST_SESSIONS, notif, ka)
+    s = cam.list_sessions()
+    assert s["status"] == C.STATUS_SUCCESS
+    assert SID in s["session_ids"]
+    assert cam.state.cover_open is True
+    assert cam.list_moments(SID)["moment_ids"] == [1]
+
+
+def test_bundled_state_on_matching_rpc_updates_state_and_completes_request(monkeypatch):
+    lens, cam = make_paired(sessions={SID: [1]})
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    seen_state, seen_notif = [], []
+    cam.on(EVENT_STATE, lambda st, ch: seen_state.append(ch))
+    cam.on(EVENT_NOTIFICATION, lambda kind, name, fields: seen_notif.append(name))
+    n_notes = len(cam.notifications)
+    lens.bundle_next(C.RT_LIST_SESSIONS, pb_bytes(1, pb_bytes(9, pb_uint(1, 1))))
+    pt = cam.request(C.RT_LIST_SESSIONS, P.build_list_sessions())
+    parsed = P.parse_list_sessions(pt)
+    assert parsed["status"] == C.STATUS_SUCCESS
+    assert SID in parsed["session_ids"]
+    assert parsed["seq"] == cam._seq
+    assert cam.state.cover_open is True
+    assert "COVER" in seen_notif
+    assert any(ch.get("cover_open") == (False, True) for ch in seen_state)
+    assert len(cam.notifications) == n_notes
+    assert cam.list_moments(SID)["moment_ids"] == [1]
+
+
+def test_stray_reply_flood_hits_pending_bound(monkeypatch, caplog):
+    lens, cam = make_paired()
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    inner = pb_uint(1, C.STATUS_SUCCESS) + pb_bytes(99, SENTINEL.encode())
+    for i in range(PENDING_RESPONSE_LIMIT + 24):
+        lens.emit_enc(_rpc_reply(C.RT_LIST_SESSIONS, 8000 + i, inner))
+    with caplog.at_level(logging.DEBUG, logger="openclips.camera"):
+        cam.poll(1.0)
+    assert len(cam._pending) == PENDING_RESPONSE_LIMIT
+    assert SENTINEL not in caplog.text
+    assert "overflow" in caplog.text
+    assert cam.list_sessions()["status"] == C.STATUS_SUCCESS
+
+
+def test_discarded_reply_logs_omit_synthetic_payload(monkeypatch, caplog):
+    lens, cam = make_paired()
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    inner = pb_uint(1, C.STATUS_SUCCESS) + pb_bytes(99, SENTINEL.encode())
+    lens.emit_enc(_rpc_reply(C.RT_FLASH_IDENTIFY_LEDS, 1, inner))
+    with caplog.at_level(logging.DEBUG, logger="openclips.camera"):
+        cam.poll(0.5)
+        cam.close()
+    assert SENTINEL not in caplog.text
+    assert "discarded" in caplog.text
+
+
+def test_pending_cleared_on_close_and_resume(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    _drive_clock(monkeypatch, lens)
+    lens.emit_enc(_rpc_reply(C.RT_LIST_SESSIONS, 9))
+    cam.poll(0.5)
+    assert cam._pending
+    lens.reopen()
+    cam.resume()
+    assert cam._pending == []
+    lens.emit_enc(_rpc_reply(C.RT_LIST_SESSIONS, 10))
+    cam.poll(0.5)
+    assert cam._pending
+    cam.close()
+    assert cam._pending == []
+
+
+def test_request_timeout_when_reply_omitted_returns_none(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    seen, _, _ = _drive_clock(monkeypatch, lens)
+    lens.omit_next(C.RT_FLASH_IDENTIFY_LEDS)
+    assert cam.request(C.RT_FLASH_IDENTIFY_LEDS, timeout=0.4) is None
+    assert seen
+
+
+def test_zero_timeout_does_not_start_full_duration_read(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    seen, _, _ = _drive_clock(monkeypatch, lens)
+    lens.omit_next(C.RT_FLASH_IDENTIFY_LEDS)
+    assert cam.request(C.RT_FLASH_IDENTIFY_LEDS, timeout=0) is None
+    assert not any(t >= 0.5 for t in seen)
+
+
+def test_near_zero_remaining_is_forwarded_to_read_indication(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    seen, _, _ = _drive_clock(monkeypatch, lens)
+    lens.omit_next(C.RT_FLASH_IDENTIFY_LEDS)
+    assert cam.request(C.RT_FLASH_IDENTIFY_LEDS, timeout=0.51) is None
+    assert seen[0] == pytest.approx(0.5)
+    assert 0 < seen[1] <= 0.01 + 1e-9
+    assert all(t <= 0.5 + 1e-9 for t in seen)
+
+
+def test_wall_clock_jump_forward_does_not_cut_elapsed_wait(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    seen, _, _ = _drive_clock(monkeypatch, lens, wall_jump=10_000)
+    lens.omit_next(C.RT_FLASH_IDENTIFY_LEDS)
+    assert cam.request(C.RT_FLASH_IDENTIFY_LEDS, timeout=0.51) is None
+    assert len(seen) == 2
+    assert seen[0] == pytest.approx(0.5)
+    assert seen[1] <= 0.02
+
+
+def test_wall_clock_jump_backward_does_not_extend_elapsed_wait(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    seen, _, _ = _drive_clock(monkeypatch, lens, wall_jump=-10_000)
+    lens.omit_next(C.RT_FLASH_IDENTIFY_LEDS)
+    assert cam.request(C.RT_FLASH_IDENTIFY_LEDS, timeout=0.51) is None
+    assert len(seen) == 2
+    assert seen[0] == pytest.approx(0.5)
+    assert seen[1] <= 0.02
+
+
+def test_wait_for_passes_remaining_budget_into_poll(monkeypatch):
+    lens, cam = make_paired()
+    cam.resume()
+    seen, _, _ = _drive_clock(monkeypatch, lens)
+    assert not cam.wait_for(lambda s: False, timeout=0.3)
+    assert seen
+    assert all(t <= 0.3 + 1e-9 for t in seen)
+
+
+def test_pair_handshake_reads_use_remaining_budget(monkeypatch):
+    lens = FakeLens(asleep=True)
+    cam = Camera(lens)
+    seen, _, _ = _drive_clock(monkeypatch, lens)
+    with pytest.raises(CameraAsleep):
+        cam.pair(generate_host_key(), timeout=0.4)
+    n_query = int(PAIR_PUBLIC_QUERY_BUDGET / 1.0)
+    query, pairing = seen[:n_query], seen[n_query:]
+    assert len(query) == n_query
+    assert all(t == pytest.approx(1.0) for t in query)
+    assert pairing
+    assert all(t <= 0.4 + 1e-9 for t in pairing)
+    assert all(t < 1.5 for t in pairing)
+
+
+def test_resume_isc_reads_use_remaining_budget(monkeypatch):
+    lens, key = paired_pair()
+    lens.asleep = True
+    cam = Camera(lens, key)
+    seen, _, _ = _drive_clock(monkeypatch, lens)
+    with pytest.raises(CameraAsleep):
+        cam.resume(timeout=0.4)
+    assert seen
+    assert all(t <= 0.4 + 1e-9 for t in seen)
+    assert all(t < 1.5 for t in seen)
+
+
+def test_resume_csc_reads_use_remaining_budget(monkeypatch):
+    lens, cam = make_paired()
+    lens.omit_next(C.RT_CSC)
+    seen, _, _ = _drive_clock(monkeypatch, lens)
+    with pytest.raises(RequestTimeout):
+        cam.resume(timeout=0.51)
+    csc_reads = seen[1:]  # first slice is ISC; later slices are CSC
+    assert csc_reads[0] == pytest.approx(0.5)
+    assert 0 < csc_reads[1] <= 0.01 + 1e-9
