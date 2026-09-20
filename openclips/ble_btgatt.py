@@ -74,13 +74,23 @@ class BtgattTransport(Transport):
             try:
                 chunk = os.read(self.fd, 8192)
             except OSError:
+                self.alive = False
                 return
             if not chunk:
+                self.alive = False
                 return
             self.buf += chunk
+            if (
+                b"Device disconnected" in chunk
+                or b"Connection timed out" in chunk
+                or b"Function not implemented" in chunk
+            ):
+                self.alive = False
 
     def _cmd(self, line: str) -> None:
         with self._lock:
+            if self.fd is None or not self.alive:
+                raise OSError("btgatt-client is gone")
             os.write(self.fd, line.encode() + b"\n")
 
     # -- Transport ---------------------------------------------------------
@@ -108,6 +118,7 @@ class BtgattTransport(Transport):
             self._pump(min(0.25, remaining))
 
     def close(self) -> None:
+        self.alive = False
         pid, self.pid = self.pid, None
         if pid:
             try:

@@ -8,8 +8,10 @@ plain dicts.
 
 from __future__ import annotations
 
+import struct
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from . import constants as C
 from .pb import (
@@ -208,12 +210,43 @@ def build_list_moments(
     )
 
 
-def parse_list_moments(pt: bytes | None) -> dict:
-    """``{1: status, 2: packed moment ids, 3: is_final, 4: best_cutoff}``."""
+@dataclass
+class MomentInfo:
+    """One entry of a LIST_MOMENTS response."""
+
+    session_id: int
+    moment_id: int
+    timestamp_ms: int | None = None
+    score: float | None = None
+    triage: int | None = None
+
+    @property
+    def datetime(self) -> datetime | None:
+        """UTC time of capture, or ``None`` when the camera did not send one.
+
+        Firmware timestamps are only meaningful after a PRIVATE_QUERY time
+        sync; a freshly reset camera counts from 2000-01-01.
+        """
+        if self.timestamp_ms is None:
+            return None
+        return datetime.fromtimestamp(self.timestamp_ms / 1000, tz=timezone.utc)
+
+
+def parse_list_moments(pt: bytes | None, session_id: int = 0) -> dict:
+    """``{1: status, 2: packed ids, 3: is_final, 4: best_cutoff, 5: packed ms timestamps,
+    6: packed float32 scores, 7: packed triage enums}``.
+
+    Fields 5 and 6 are live-validated; the list is ordered by score, highest
+    first. Field 7 is inferred from the app schema and left as raw ints.
+    """
     out = {
         "status": None,
         "ok": False,
         "moment_ids": [],
+        "timestamps_ms": [],
+        "scores": [],
+        "triage": [],
+        "moments": [],
         "is_final": None,
         "best_cutoff": None,
         "seq": None,
@@ -230,17 +263,50 @@ def parse_list_moments(pt: bytes | None) -> dict:
             ids.extend(parse_packed_varints(bytes(v)))
         else:
             ids.append(int(v))
+    timestamps = parse_packed_varints(first_bytes(h, 5)) if h.get(5) else []
+    raw_scores = first_bytes(h, 6)
+    scores = (
+        list(struct.unpack(f"<{len(raw_scores) // 4}f", raw_scores[: len(raw_scores) // 4 * 4])) if raw_scores else []
+    )
+    triage = parse_packed_varints(first_bytes(h, 7)) if h.get(7) else []
+    moments = [
+        MomentInfo(
+            session_id=session_id,
+            moment_id=mid,
+            timestamp_ms=timestamps[i] if i < len(timestamps) else None,
+            score=scores[i] if i < len(scores) else None,
+            triage=triage[i] if i < len(triage) else None,
+        )
+        for i, mid in enumerate(ids)
+    ]
     status = first(h, 1)
     out.update(
         status=status,
         ok=status == C.STATUS_SUCCESS,
         moment_ids=ids,
+        timestamps_ms=timestamps,
+        scores=scores,
+        triage=triage,
+        moments=moments,
         is_final=first(h, 3),
         best_cutoff=first(h, 4),
         seq=first(outer, C.SEQ_ECHO_FIELD),
         raw=(inner or pt).hex(),
     )
     return out
+
+
+def session_start_time(session_id: int) -> datetime | None:
+    """Session ids are the camera clock in nanoseconds when the session began.
+
+    Returns ``None`` for values that cannot be a plausible timestamp (for
+    example a camera whose clock was never synced reports dates in 2000).
+    """
+    try:
+        dt = datetime.fromtimestamp(session_id / 1e9, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return dt if dt.year >= 2010 else None
 
 
 def build_placeholder(session_id: int, moment_id: int) -> bytes:
@@ -403,20 +469,27 @@ class CameraState:
             "active_device_id": self.active_device_id,
         }
 
-    def update_from(self, pt: bytes) -> bool:
-        """Merge every state entry found in ``pt``. Returns True if any."""
+    def update_from(self, pt: bytes) -> dict:
+        """Merge every state entry found in ``pt``.
+
+        Returns ``{field: (old, new)}`` for the attributes that changed. An
+        empty dict means the message carried no state entries or nothing new.
+        The returned ``entries`` key lists every entry seen (kind, name,
+        fields) even when values did not change, under ``"_entries"``.
+        """
         try:
             outer = parse_pb(pt)
         except ValueError:
-            return False
+            return {}
         blobs = [v for v in outer.get(1, []) if isinstance(v, (bytes, bytearray))]
-        found = False
+        before = self.as_dict()
+        entries: list[dict] = []
         for raw in blobs:
             try:
-                entries = parse_pb(bytes(raw))
+                parsed = parse_pb(bytes(raw))
             except ValueError:
                 continue
-            for kind, vals in entries.items():
+            for kind, vals in parsed.items():
                 payload = vals[0]
                 if isinstance(payload, (bytes, bytearray)):
                     try:
@@ -425,10 +498,16 @@ class CameraState:
                         inner = {}
                 else:
                     inner = {1: [payload]}
-                self.raw.append({"kind": kind, "name": C.NOTIFICATION_KIND.get(kind, "?"), "fields": inner})
+                entry = {"kind": kind, "name": C.NOTIFICATION_KIND.get(kind, "?"), "fields": inner}
+                self.raw.append(entry)
+                entries.append(entry)
                 self._apply(kind, inner)
-                found = True
-        return found
+        if not entries:
+            return {}
+        after = self.as_dict()
+        changes: dict = {k: (before[k], after[k]) for k in after if before[k] != after[k] and not k.endswith("_name")}
+        changes["_entries"] = entries
+        return changes
 
     def _apply(self, kind: int, inner: dict) -> None:
         if kind == 1:

@@ -89,7 +89,7 @@ Responses carry single async updates with no request field at all.
 | 9 | INITIATE_WIFI | `{1: wifi_direct, 2: capture_preview}` | `{0, 1}` opens the SoftAP in paired mode. Response `{1: status, 2: ssid, 3: psk16, 4: url}`. **live** |
 | 10 | CANCEL_WIFI | empty | **live** |
 | 11 | LIST_SESSIONS | `{1: fixed64 newer_than, 2: max_count}` | Response field 2 is concatenated 8-byte LE ids, field 3 the open session. **live** |
-| 12 | LIST_MOMENTS | `{1: fixed64 session_id, 2..6: include_* bools}` | Field 1 is a **session id**, not a timestamp. `0` yields nothing. Blocks while the session is open. Response `{1: status, 2: packed ids, 3: is_final, 4: best_cutoff}`. **live** |
+| 12 | LIST_MOMENTS | `{1: fixed64 session_id, 2..6: include_* bools}` | Field 1 is a **session id**, not a timestamp. `0` yields nothing. Blocks while the session is open. Response `{1: status, 2: packed ids, 3: is_final, 4: best_cutoff, 5: packed int64 unix ms per moment, 6: packed float32 score per moment}`, ordered best score first. Field 7 is a packed triage enum (inferred). **live** |
 | 13 | GET_PLACEHOLDER_IMAGE | `{1: fixed64 session_id, 2: moment}` | Accepted, but returned no image bytes over BLE. Use HTTP. **live** |
 | 14 | DELETE_MOMENTS | `{1: {1: fixed64 session_id, 2: packed ids}}` | Trash (49) and restore (50) share the shape. Delete **live**, others inferred. |
 | 21 | COMPLETE_CURRENT_SESSION | empty | SUCCESS only after the hardware cover is closed. **live** |
@@ -217,6 +217,15 @@ Operational facts:
 3. Joining the WPA2 network the camera announces. This is OS-specific; the
    library only ships a Linux NetworkManager helper.
 4. HTTP POST to the returned URL.
+
+## Clocks and identifiers
+
+* Session ids are the camera clock in **nanoseconds** at session start.
+  Moment timestamps (LIST_MOMENTS field 5) are the same clock in
+  milliseconds. Both are live-observed.
+* A factory reset clears the clock to 2000-01-01. `PRIVATE_QUERY
+  {1: fixed64 unix_millis}` sets it; send one after every connect so
+  timestamps are real.
 
 ## Pairing persistence
 

@@ -59,9 +59,10 @@ pip install -e '.[ble]'     # adds bleak for `openclips scan` and non-Linux BLE
 6. **Download**: `openclips sync --out ~/Pictures/clips`. Files land in
    `<out>/<session_id>/moment_<id>.jpg`.
 
-Other commands: `status`, `sessions`, `moments <session>`, `wifi --hold`
-(open the SoftAP and print credentials for manual use), `delete`, `forget`,
-`encode` (print request bytes without a camera). Add `--json` for
+Other commands: `status`, `sessions`, `moments <session>` (with time and
+score), `watch` (print state changes live), `wifi --hold` (open the SoftAP
+and print credentials for manual use), `delete`, `forget`, `encode` (print
+request bytes without a camera). Add `--json` for
 machine-readable output and `-v` for a log of every step.
 
 If the camera does not answer, press the shutter button once. Myriad
@@ -72,24 +73,24 @@ shutter before each command.
 ## Library
 
 ```python
-from openclips import Camera, PairingStore, extract_jpeg
-from openclips.ble_btgatt import BtgattTransport
+from openclips import ConnectionManager, PairingStore, Syncer, EVENT_STATE
+from openclips.wifi_nmcli import NmcliWifi
 
-pairing = PairingStore().get("AA:BB:CC:DD:EE:FF")
-with BtgattTransport(pairing.address) as t:
-    cam = Camera(t, pairing.pairing_key)
-    state = cam.resume()                      # ISC/CSC handshake, encrypted channel up
-    sid = max(cam.list_sessions()["session_ids"])
-    ids = cam.list_moments(sid)["moment_ids"]
-    with cam.keepalive():                     # heartbeats or the SoftAP dies
-        creds = cam.initiate_wifi()           # ssid / passphrase / url
-        ...join creds.ssid with your OS...
-        jpeg = extract_jpeg(cam.fetch_moment_http(sid, ids[0], url=creds.url))
+with ConnectionManager("AA:BB:CC:DD:EE:FF", store=PairingStore()) as cam:
+    cam.on(EVENT_STATE, lambda state, changes: print(changes))
+    for m in cam.moments(max(cam.list_sessions()["session_ids"])):
+        print(m.moment_id, m.datetime, m.score)
+    Syncer(cam, "~/Pictures/clips", wifi=NmcliWifi(), on_progress=print).sync()
 ```
 
-`openclips` has one runtime dependency (`pycryptodome`). BLE is behind the
-small `Transport` interface; implement three methods on your platform's
-GATT stack and everything above it works. See `examples/`.
+`ConnectionManager` handles the camera's quirks (retries, sleep, keepalive,
+clock sync), `Camera` exposes every validated RPC plus state events, and
+`Syncer` downloads with progress, cancellation and a local catalog. There
+is an asyncio facade in `openclips.aio`. The library has one runtime
+dependency (`pycryptodome`); BLE sits behind a three-method `Transport`
+interface and Wi-Fi behind `WifiJoiner`, so ports are small. A complete
+in-process fake camera under `tests/` lets you build a UI with no
+hardware. Read [`docs/LIBRARY.md`](docs/LIBRARY.md) before building on it.
 
 **Linux warning:** do not use `bleak` or any BlueZ D-Bus GATT writer against
 this camera. Its BLE sidecar wedges and only a factory reset recovers.
@@ -99,6 +100,7 @@ this camera. Its BLE sidecar wedges and only a factory reset recovers.
 
 | Document | Contents |
 |---|---|
+| [`docs/LIBRARY.md`](docs/LIBRARY.md) | Building an app: layers, threading, events, connection lifecycle, sync |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | Wire protocol, crypto, capture lifecycle, HTTP API. Port from this. |
 | [`docs/HARDWARE.md`](docs/HARDWARE.md) | Buttons, LEDs, reset procedures, what wedges the camera |
 | [`docs/REVERSE-ENGINEERING.md`](docs/REVERSE-ENGINEERING.md) | How the protocol was recovered, tools, dead ends |

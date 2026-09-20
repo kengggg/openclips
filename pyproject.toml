@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openclips"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source host client for the discontinued Google Clips camera: pair over BLE, control capture, download photos."
 readme = "README.md"
 requires-python = ">=3.10"

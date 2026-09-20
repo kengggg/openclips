@@ -18,8 +18,9 @@ the place to claim an item.
 - **Thumbnails.** `RESOLUTION_THUMB` answers 500 on freshly captured
   moments. Find when the camera generates them, or decode
   `/preview_header` and `/fetch_frame` for a cheap preview.
-- **Moment metadata.** `LIST_MOMENTS` fields 5 and up carry timestamps and
-  scores; `/fetch_moment_metadata` returns more. Expose both.
+- **Moment metadata over HTTP.** Timestamps and scores are parsed from
+  `LIST_MOMENTS`; `/fetch_moment_metadata` likely returns more and is not
+  decoded yet.
 - **Trash and restore.** Builders exist; neither has been sent live.
 - **Longer SoftAP life.** Work out what the Android app does to keep the
   Wi-Fi Direct group owner alive past the first handful of requests.
@@ -28,7 +29,8 @@ the place to claim an item.
 
 ## Later
 
-- A small GUI or system tray sync for Linux desktops
+- A small GUI or system tray sync for Linux desktops, on top of
+  `ConnectionManager`, `Syncer` and the event API (see `docs/LIBRARY.md`)
 - A cross-platform `sync` that joins Wi-Fi via the OS APIs
 - Firmware preservation notes: model formats in the update package, whether
   the AI pipeline can run outside the camera

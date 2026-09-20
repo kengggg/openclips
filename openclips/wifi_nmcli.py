@@ -1,15 +1,18 @@
-"""Optional Linux helper: join the camera's SoftAP with NetworkManager.
+"""Linux NetworkManager helper: join the camera's SoftAP and restore afterwards.
 
-Nothing here is required by the library. Other platforms join the SSID with
-their own tooling and call :meth:`openclips.camera.Camera.fetch_moment_http`.
+Nothing here is required by the library. Other platforms provide their own
+:class:`~openclips.wifi.WifiJoiner`.
 """
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 
 from .wifi import WifiCredentials
+
+logger = logging.getLogger(__name__)
 
 
 def _run(args: list[str], timeout: float = 20) -> subprocess.CompletedProcess:
@@ -51,8 +54,7 @@ def wait_for_ssid(ssid: str, iface: str, timeout: float = 25.0, log=None) -> boo
         r = _run(["nmcli", "-t", "-f", "SSID", "device", "wifi", "list", "ifname", iface])
         if ssid in r.stdout.splitlines():
             return True
-        if log:
-            log(f"waiting for SSID {ssid!r}")
+        (log or logger.debug)(f"waiting for SSID {ssid!r}")
     return False
 
 
@@ -74,8 +76,7 @@ def join_nmcli(
         )
         if r.returncode == 0:
             return True
-        if log:
-            log(f"join attempt {attempt + 1} failed: {r.stderr.strip()}")
+        (log or logger.info)(f"join attempt {attempt + 1} failed: {r.stderr.strip()}")
         time.sleep(1.5)
     return False
 
@@ -89,3 +90,41 @@ def restore_nmcli(connection: str | None) -> None:
     """Bring a previously active connection back up."""
     if connection:
         _run(["nmcli", "connection", "up", connection], timeout=30)
+
+
+class NmcliWifi:
+    """:class:`~openclips.wifi.WifiJoiner` on top of ``nmcli``.
+
+    Remembers the connection that was active before joining and restores it
+    in :meth:`leave`, unless ``restore=False``.
+    """
+
+    def __init__(self, iface: str | None = None, scan_timeout: float = 30.0, restore: bool = True):
+        self.iface = iface
+        self.scan_timeout = scan_timeout
+        self.restore = restore
+        self.previous: str | None = None
+        self.ssid: str | None = None
+
+    def join(self, creds: WifiCredentials) -> bool:
+        iface = self.iface or detect_wifi_iface()
+        if not iface:
+            logger.error("no Wi-Fi interface found via nmcli")
+            return False
+        self.iface = iface
+        self.previous = active_connection(iface)
+        self.ssid = creds.ssid
+        if not wait_for_ssid(creds.ssid, iface, timeout=self.scan_timeout):
+            logger.error("SSID %s never appeared", creds.ssid)
+            return False
+        ok = join_nmcli(creds, iface)
+        if not ok:
+            self.leave()
+        return ok
+
+    def leave(self) -> None:
+        if self.ssid:
+            forget_nmcli(self.ssid)
+            self.ssid = None
+        if self.restore and self.previous:
+            restore_nmcli(self.previous)

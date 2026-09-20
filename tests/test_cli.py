@@ -25,6 +25,8 @@ def fake(monkeypatch):
 
     def open_transport(args):
         lens = holder["factory"](args.address)
+        if hasattr(lens, "reopen"):
+            lens.reopen()  # a fresh GATT connection to the same camera
         holder["lens"] = lens
         return lens
 
@@ -90,7 +92,10 @@ def test_sessions_moments_delete(store, fake, capsys):
     rc, out, _ = run(capsys, "sessions")
     assert rc == 0 and str(SID) in out and "(open)" in out
     rc, out, _ = run(capsys, "moments", str(SID))
-    assert rc == 0 and out.strip() == "2 3 1"
+    assert rc == 0 and [line.split()[0] for line in out.strip().splitlines()] == ["2", "3", "1"]
+    assert "score=" in out
+    rc, out, _ = run(capsys, "--json", "moments", str(SID))
+    assert rc == 0 and json.loads(out)["moments"][0]["moment_id"] == 2
     rc, out, _ = run(capsys, "delete", str(SID), "2,3")
     assert rc == 0 and lens.sessions[SID] == [1]
     rc, out, _ = run(capsys, "complete")
@@ -143,11 +148,40 @@ def test_sync_downloads_jpegs(store, fake, capsys, tmp_path, monkeypatch):
     assert saved == ["moment_2.jpg", "moment_3.jpg"]
     assert not (out_dir / "5").exists()  # newest session only by default
     assert ("join", "Clips6013") in calls and ("restore", "HomeNet") in calls and ("forget", "Clips6013") in calls
-    assert lens.wifi_open
+    assert not lens.wifi_open  # CANCEL_WIFI after the download
+    assert (out_dir / ".openclips-catalog.json").exists()
 
     rc, out, err = run(capsys, "sync", "--out", str(out_dir), "--all-sessions")
     assert rc == 0
     assert (out_dir / "5" / "moment_9.jpg").exists()
+
+    rc, out, err = run(capsys, "sync", "--out", str(out_dir), "--all-sessions")
+    assert rc == 0 and "nothing new" in out
+
+
+def test_watch_prints_state_changes(store, fake, capsys):
+    key = b"\x0c" * 32
+    s = PairingStore(store)
+    s.put(Pairing("AA:BB:CC:DD:EE:FF", key))
+    s.save()
+    lens = FakeLens(pairing_key=key)
+    fake["factory"] = lambda addr: lens
+    from openclips.pb import pb_uint
+
+    orig_connect = cli.connect_paired
+
+    def connect_and_push(*a, **kw):
+        mgr = orig_connect(*a, **kw)
+        lens.push_notification(9, pb_uint(1, 1))
+        return mgr
+
+    fake_module = cli
+    fake_module.connect_paired = connect_and_push
+    try:
+        rc, out, _ = run(capsys, "watch", "--duration", "0.5")
+    finally:
+        fake_module.connect_paired = orig_connect
+    assert rc == 0 and "cover_open: False -> True" in out
 
 
 def test_forget(store, fake, capsys):

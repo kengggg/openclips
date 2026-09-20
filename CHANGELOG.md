@@ -6,9 +6,35 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+App-readiness pass: the library is now a foundation for GUIs and daemons,
+not just the CLI. See `docs/LIBRARY.md`.
+
 ### Added
+- `ConnectionManager`: GATT connect retries, resume, clock sync,
+  session-long keepalive, `ensure()` reconnect, wake hint on `CameraAsleep`.
+- `Camera` events (`EVENT_STATE` with a field diff, `EVENT_NOTIFICATION`,
+  `EVENT_DISCONNECTED`), `poll()`, `wait_for()`, `start_keepalive()` /
+  `stop_keepalive()`, `moments()` returning typed `MomentInfo`.
+- Moment metadata: per-moment timestamps and scores from LIST_MOMENTS
+  (live-validated), `session_start_time()`.
+- `Syncer` with plan/run, progress callbacks, cancellation, custom path
+  layout; `Catalog` index of downloads; `WifiJoiner` abstraction with
+  `NmcliWifi`, `ManualWifi`, `NullWifi`.
+- `openclips.aio`: `AsyncCamera` and `AsyncConnection`.
+- `ConnectionLost` detection in the btgatt transport; `UnsafeRequest`,
+  `WifiError` exceptions in `openclips.errors`.
+- CLI: `watch` command, `capture --wait`, `moments` shows time and score,
+  `sessions` shows start time, `--retries`, catalog-aware `sync`.
 - Packaging build check, Python 3.14 in CI, coverage, Dependabot, release and
   PyPI publish workflows, pre-commit config, CITATION.cff.
+
+### Changed
+- `Camera(..., log=)` removed in favour of stdlib `logging` under `openclips.*`.
+- `CameraState.update_from()` returns a dict of changes instead of a bool.
+- `parse_list_moments()` takes an optional `session_id` and returns
+  `timestamps_ms`, `scores`, `triage` and `moments`.
+- `Camera.close()` stops the keepalive thread and clears the session.
+- Exceptions moved to `openclips.errors` (still importable from `openclips`).
 
 ## [0.1.0] - 2026-09-20
 

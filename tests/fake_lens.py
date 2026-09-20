@@ -9,6 +9,8 @@ is ``request type + 1`` and the sequence number echoes in field 40.
 from __future__ import annotations
 
 import os
+import struct
+import time
 from collections import deque
 
 from openclips import constants as C
@@ -44,6 +46,8 @@ class FakeLens(Transport):
         open_session: int | None = None,
         cover_open: bool = False,
         asleep: bool = False,
+        with_metadata: bool = True,
+        clock_ms: int | None = None,
     ):
         self.lens_key = generate_host_key()
         self.pairing_key = pairing_key
@@ -53,6 +57,9 @@ class FakeLens(Transport):
         self.open_session = open_session
         self.cover_open = cover_open
         self.asleep = asleep
+        self.with_metadata = with_metadata
+        self.clock_ms = clock_ms
+        self.time_synced_to: int | None = None
         self.update_required = True
         self.active_device = None
         self.sess: SecureSession | None = None
@@ -83,6 +90,19 @@ class FakeLens(Transport):
     def close(self) -> None:
         """Dropping the GATT connection resets the secure channel, like the real camera."""
         self.closed = True
+        self.alive = False
+        self.sess = None
+        self.out.clear()
+
+    def drop_link(self) -> None:
+        """Simulate the BLE link dying underneath the host."""
+        self.alive = False
+        self.out.clear()
+
+    def reopen(self) -> None:
+        """A fresh GATT connection to the same camera (new transport instance semantics)."""
+        self.alive = True
+        self.closed = False
         self.sess = None
         self.out.clear()
 
@@ -169,7 +189,8 @@ class FakeLens(Transport):
     def _rt_2048(self, inner):  # DISABLE_CONNECTION_TIMEOUTS
         return _status()
 
-    def _rt_2(self, inner):  # PRIVATE_QUERY
+    def _rt_2(self, inner):  # PRIVATE_QUERY (time sync)
+        self.time_synced_to = first(parse_pb(inner), 1)
         return pb_uint(1, 5) + pb_bytes(13, b"00008109J06013")
 
     def _rt_8(self, inner):  # SET_UPDATE_REQUIRED
@@ -215,7 +236,12 @@ class FakeLens(Transport):
         if not sid or sid == self.open_session:
             return _status() + pb_uint(3, 0) + pb_uint(4, 0)  # empty, mirrors firmware
         ids = self.sessions.get(sid, [])
-        return _status() + pb_packed_varints(2, ids) + pb_uint(3, 1) + pb_uint(4, 0)
+        body = _status() + pb_packed_varints(2, ids) + pb_uint(3, 1) + pb_uint(4, 0)
+        if ids and self.with_metadata:
+            base = self.clock_ms or int(time.time() * 1000)
+            body += pb_packed_varints(5, [base + 1000 * i for i in range(len(ids))])
+            body += pb_bytes(6, struct.pack(f"<{len(ids)}f", *[0.9 - 0.1 * i for i in range(len(ids))]))
+        return body
 
     def _rt_14(self, inner):  # DELETE_MOMENTS
         packed = parse_pb(first_bytes(parse_pb(inner), 1))

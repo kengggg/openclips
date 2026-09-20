@@ -1,26 +1,30 @@
 """High-level camera session: pairing, resume, control RPCs and media fetch.
 
 A :class:`Camera` owns one connected :class:`~openclips.transport.Transport`.
-Typical use::
+Applications usually get one from :class:`openclips.connection.ConnectionManager`
+rather than building it by hand::
 
-    with BtgattTransport("AA:BB:CC:DD:EE:FF") as t:
-        cam = Camera(t, pairing_key)
-        state = cam.resume()
-        sessions = cam.list_sessions()["session_ids"]
-        moments = cam.list_moments(sessions[0])["moment_ids"]
-        with cam.keepalive():
-            creds = cam.initiate_wifi()
-            ...join creds.ssid...
-            jpeg = cam.fetch_moment_http(sessions[0], moments[0], url=creds.url)
+    with ConnectionManager(address, pairing_key=key) as cam:
+        cam.on(EVENT_STATE, lambda state, changes: print(changes))
+        sid = max(cam.list_sessions()["session_ids"])
+        for m in cam.list_moments(sid)["moments"]:
+            print(m.moment_id, m.datetime, m.score)
+
+Threading model: every method blocks and must be called from one thread at
+a time (a worker thread in a GUI). The keepalive thread only writes
+heartbeats and is safe alongside that. Event callbacks run on whichever
+thread called into the camera when the notification was read.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from contextlib import contextmanager
 
 from . import constants as C
@@ -32,44 +36,52 @@ from .crypto import (
     host_public_bytes,
     lens_proof,
 )
+from .errors import (
+    CameraAsleep,
+    CameraError,
+    ConnectionLost,
+    NotPaired,
+    PairingKeyMismatch,
+    RequestTimeout,
+    UnsafeRequest,
+)
 from .framing import bqs_frame, request_payload, strip_bqs
 from .pb import parse_pb
 from .transport import Transport
 from .wifi import WifiCredentials
 
+__all__ = [
+    "Camera",
+    "CameraAsleep",
+    "CameraError",
+    "ConnectionLost",
+    "NotPaired",
+    "PairingKeyMismatch",
+    "RequestTimeout",
+    "UnsafeRequest",
+    "EVENT_STATE",
+    "EVENT_NOTIFICATION",
+    "EVENT_DISCONNECTED",
+    "extract_jpeg",
+]
 
-class CameraError(Exception):
-    """Base class for camera protocol errors."""
+logger = logging.getLogger(__name__)
 
+#: ``callback(state: CameraState, changes: dict)`` after any state notification.
+EVENT_STATE = "state"
+#: ``callback(kind: int, name: str, fields: dict)`` for every raw state entry.
+EVENT_NOTIFICATION = "notification"
+#: ``callback()`` once, when the transport reports the link is gone.
+EVENT_DISCONNECTED = "disconnected"
 
-class CameraAsleep(CameraError):
-    """The camera advertises but Myriad is idle. Press the shutter once."""
-
-
-class PairingKeyMismatch(CameraError):
-    """The lens proof did not verify: the stored pairing key is stale."""
-
-
-class NotPaired(CameraError):
-    """Operation needs a pairing key / secure session."""
-
-
-class RequestTimeout(CameraError):
-    """No response to a request within the timeout."""
+_EVENTS = (EVENT_STATE, EVENT_NOTIFICATION, EVENT_DISCONNECTED)
 
 
 class Camera:
-    def __init__(
-        self,
-        transport: Transport,
-        pairing_key: bytes | None = None,
-        device_id: int = 1,
-        log=None,
-    ):
+    def __init__(self, transport: Transport, pairing_key: bytes | None = None, device_id: int = 1):
         self.transport = transport
         self.pairing_key = pairing_key
         self.device_id = device_id
-        self.log = log or (lambda msg: None)
         self.sess: SecureSession | None = None
         self.state = P.CameraState()
         self.app_nonce: bytes | None = None
@@ -78,35 +90,91 @@ class Camera:
         self._pending: list[bytes] = []
         self._seq = 0
         self._lock = threading.RLock()
+        self._listeners: dict[str, list[Callable]] = {e: [] for e in _EVENTS}
+        self._disconnected_emitted = False
+        self._hb_thread: threading.Thread | None = None
         self._hb_stop: threading.Event | None = None
+        self._last_hb = 0.0
+
+    # ------------------------------------------------------------------ events
+
+    def on(self, event: str, callback: Callable) -> Callable:
+        """Register ``callback`` for ``event``; returns it for :meth:`off`."""
+        if event not in self._listeners:
+            raise ValueError(f"unknown event {event!r}")
+        self._listeners[event].append(callback)
+        return callback
+
+    def off(self, event: str, callback: Callable) -> None:
+        try:
+            self._listeners[event].remove(callback)
+        except (KeyError, ValueError):
+            pass
+
+    def _emit(self, event: str, *args) -> None:
+        for cb in list(self._listeners.get(event, ())):
+            try:
+                cb(*args)
+            except Exception:
+                logger.exception("event handler for %s failed", event)
 
     # ------------------------------------------------------------------ plumbing
+
+    @property
+    def connected(self) -> bool:
+        return self.sess is not None and getattr(self.transport, "alive", True)
+
+    def _check_alive(self) -> None:
+        if not getattr(self.transport, "alive", True):
+            if not self._disconnected_emitted:
+                self._disconnected_emitted = True
+                self._emit(EVENT_DISCONNECTED)
+            raise ConnectionLost("BLE link dropped")
 
     def _next_seq(self) -> int:
         with self._lock:
             self._seq += 1
             return self._seq
 
+    def _write(self, frame: bytes) -> None:
+        self._check_alive()
+        try:
+            self.transport.write(frame)
+        except OSError as e:
+            self.transport.alive = False
+            self._check_alive()
+            raise ConnectionLost(str(e)) from e
+
     def _send_plain(self, rtype: int, inner: bytes = b"") -> int:
         seq = self._next_seq()
-        self.transport.write(bqs_frame(request_payload(rtype, inner, seq)))
+        logger.debug("-> %s (plain, seq %d, %d B)", C.REQUEST_NAMES.get(rtype, rtype), seq, len(inner))
+        self._write(bqs_frame(request_payload(rtype, inner, seq)))
         return seq
 
     def _send_enc(self, rtype: int, inner: bytes = b"") -> int:
         if self.sess is None:
             raise NotPaired("secure session not established; call resume() first")
         if rtype in C.UNSAFE_REQUESTS:
-            raise CameraError(f"{C.REQUEST_NAMES.get(rtype, rtype)} is known to wedge the camera")
+            raise UnsafeRequest(f"{C.REQUEST_NAMES.get(rtype, rtype)} is known to wedge the camera")
         with self._lock:
             seq = self._next_seq()
             frame = bqs_frame(self.sess.encrypt(request_payload(rtype, inner, seq)))
-            self.transport.write(frame)
+            if rtype != C.RT_KEEP_ALIVE:
+                logger.debug("-> %s (seq %d, %d B)", C.REQUEST_NAMES.get(rtype, rtype), seq, len(inner))
+            self._write(frame)
         return seq
+
+    def _read_raw(self, timeout: float) -> bytes | None:
+        self._check_alive()
+        raw = self.transport.read_indication(timeout)
+        if raw is None:
+            self._check_alive()
+        return raw
 
     def _read_plain(self, timeout: float, want_field: int | None = None) -> bytes | None:
         end = time.time() + timeout
         while time.time() < end:
-            raw = self.transport.read_indication(min(1.0, max(0.05, end - time.time())))
+            raw = self._read_raw(min(1.0, max(0.05, end - time.time())))
             if not raw:
                 continue
             body = strip_bqs(raw)
@@ -130,9 +198,18 @@ class Camera:
         """Absorb keep-alive answers and state notifications. True if absorbed."""
         if P.is_keepalive_response(pt):
             return True
-        if self.state.update_from(pt) and len(P.response_fields(pt)) <= 1:
-            self.notifications.append(pt)
-            return True
+        changes = self.state.update_from(pt)
+        if changes:
+            entries = changes.pop("_entries", [])
+            for e in entries:
+                logger.debug("<- notification %s %s", e["name"], e["fields"])
+                self._emit(EVENT_NOTIFICATION, e["kind"], e["name"], e["fields"])
+            if changes:
+                logger.debug("state changed: %s", changes)
+            self._emit(EVENT_STATE, self.state, changes)
+            if len(P.response_fields(pt)) <= 1:
+                self.notifications.append(pt)
+                return True
         return False
 
     def _matches(self, pt: bytes, seq: int | None, field: int | None) -> bool:
@@ -142,9 +219,7 @@ class Camera:
             return False
         if field is not None and field in f:
             return True
-        if seq is not None and f.get(C.SEQ_ECHO_FIELD, [None])[0] == seq and field is None:
-            return True
-        return False
+        return seq is not None and field is None and f.get(C.SEQ_ECHO_FIELD, [None])[0] == seq
 
     def _read_enc(self, timeout: float, seq: int | None = None, field: int | None = None) -> bytes | None:
         for pt in list(self._pending):
@@ -153,47 +228,114 @@ class Camera:
                 return pt
         end = time.time() + timeout
         while time.time() < end:
-            raw = self.transport.read_indication(min(0.5, max(0.05, end - time.time())))
+            raw = self._read_raw(min(0.5, max(0.05, end - time.time())))
             if not raw:
                 continue
             pt = self._decrypt(raw)
             if pt is None:
+                logger.debug("<- undecryptable indication (%d B)", len(raw))
                 continue
             if self._classify(pt):
                 continue
             if self._matches(pt, seq, field):
                 return pt
+            logger.debug("<- stray response fields %s", P.response_fields(pt))
             self._pending.append(pt)
         return None
 
     def request(self, rtype: int, inner: bytes = b"", timeout: float = 12.0) -> bytes | None:
         """Send an encrypted request and wait for its response (decrypted)."""
         seq = self._send_enc(rtype, inner)
-        return self._read_enc(timeout, seq=seq, field=C.response_field(rtype))
+        pt = self._read_enc(timeout, seq=seq, field=C.response_field(rtype))
+        if pt is None:
+            logger.debug("<- %s timed out after %.0fs", C.REQUEST_NAMES.get(rtype, rtype), timeout)
+        return pt
+
+    def poll(self, timeout: float = 0.5) -> int:
+        """Read incoming indications for up to ``timeout`` seconds.
+
+        Fires events for notifications and buffers stray responses. Returns
+        the number of notifications processed. Call this from an app loop
+        when nothing else is talking to the camera.
+        """
+        if self.sess is None:
+            raise NotPaired("secure session not established")
+        n = 0
+        end = time.time() + timeout
+        while time.time() < end:
+            raw = self._read_raw(min(0.5, max(0.05, end - time.time())))
+            if not raw:
+                continue
+            pt = self._decrypt(raw)
+            if pt is None:
+                continue
+            if self._classify(pt):
+                n += 1
+            else:
+                self._pending.append(pt)
+        return n
+
+    def wait_for(self, predicate: Callable[[P.CameraState], bool], timeout: float, heartbeat: float = 4.0) -> bool:
+        """Poll until ``predicate(state)`` holds or ``timeout`` passes.
+
+        Sends a heartbeat every ``heartbeat`` seconds unless a keepalive
+        thread is already running.
+        """
+        end = time.time() + timeout
+        while True:
+            if predicate(self.state):
+                return True
+            if time.time() >= end:
+                return False
+            if self._hb_thread is None and time.time() - self._last_hb > heartbeat:
+                self.heartbeat()
+            self.poll(0.5)
+
+    # ------------------------------------------------------------------ keepalive
 
     def heartbeat(self) -> None:
         """Encrypted KEEP_ALIVE. Send every few seconds during long waits."""
         self._send_enc(C.RT_KEEP_ALIVE)
+        self._last_hb = time.time()
 
-    @contextmanager
-    def keepalive(self, interval: float = 3.5):
-        """Run heartbeats on a background thread for the duration of the block."""
+    def start_keepalive(self, interval: float = 3.5) -> None:
+        """Run heartbeats on a background thread until :meth:`stop_keepalive`."""
+        if self._hb_thread is not None:
+            return
         stop = threading.Event()
 
         def loop():
             while not stop.wait(interval):
                 try:
                     self.heartbeat()
+                except ConnectionLost:
+                    return
                 except Exception:
+                    logger.debug("heartbeat failed", exc_info=True)
                     return
 
-        t = threading.Thread(target=loop, daemon=True)
+        t = threading.Thread(target=loop, name="openclips-keepalive", daemon=True)
+        self._hb_stop, self._hb_thread = stop, t
         t.start()
+
+    def stop_keepalive(self) -> None:
+        if self._hb_thread is None:
+            return
+        self._hb_stop.set()
+        self._hb_thread.join(timeout=2)
+        self._hb_thread = self._hb_stop = None
+
+    @contextmanager
+    def keepalive(self, interval: float = 3.5):
+        """Heartbeats for the duration of the block (no-op if already running)."""
+        started = self._hb_thread is None
+        if started:
+            self.start_keepalive(interval)
         try:
             yield
         finally:
-            stop.set()
-            t.join(timeout=2)
+            if started:
+                self.stop_keepalive()
 
     # ------------------------------------------------------------------ handshake
 
@@ -221,7 +363,7 @@ class Camera:
         if lens_pub is None:
             raise CameraAsleep("no pairing response: is the camera in setup mode?")
         self.pairing_key = derive_pairing_key(host_key, lens_pub)
-        self.log(f"paired: lens_pub={lens_pub.hex()[:16]}…")
+        logger.info("paired with lens key %s…", lens_pub.hex()[:16])
         return self.pairing_key, lens_pub
 
     def resume(self, app_nonce: bytes | None = None, timeout: float = 15.0) -> P.CameraState:
@@ -252,15 +394,18 @@ class Camera:
         end = time.time() + timeout
         pt = None
         while time.time() < end and pt is None:
-            raw = self.transport.read_indication(1.0)
+            raw = self._read_raw(1.0)
             if not raw:
                 continue
             pt = self._decrypt(raw)
         if pt is None:
             self.sess = None
             raise RequestTimeout("no CSC response")
-        self.state = P.parse_state(pt)
-        self.log(f"session up: state={self.state.system_state_name}")
+        self.state = P.CameraState()
+        changes = self.state.update_from(pt)
+        changes.pop("_entries", None)
+        self._emit(EVENT_STATE, self.state, changes)
+        logger.info("session up: %s", self.state.system_state_name)
         self.disable_timeouts()
         return self.state
 
@@ -269,8 +414,9 @@ class Camera:
     def disable_timeouts(self) -> bool:
         return self.request(C.RT_DISABLE_TIMEOUTS, timeout=8) is not None
 
-    def time_sync(self) -> bytes | None:
-        return self.request(C.RT_PRIVATE_QUERY, P.build_private_query(), timeout=8)
+    def time_sync(self, millis: int | None = None) -> bool:
+        """PRIVATE_QUERY with the host clock. Moment timestamps depend on it."""
+        return self.request(C.RT_PRIVATE_QUERY, P.build_private_query(millis), timeout=8) is not None
 
     def set_update_required(self, required: bool = False) -> bool:
         pt = self.request(C.RT_SET_UPDATE_REQUIRED, P.build_set_update_required(required))
@@ -312,11 +458,15 @@ class Camera:
         return P.parse_list_sessions(pt)
 
     def list_moments(self, session_id: int, timeout: float = 20.0) -> dict:
-        """Moments of a completed session. Blocks while the session is open."""
+        """Moments of a completed session, best score first. Blocks while the session is open."""
         pt = self.request(C.RT_LIST_MOMENTS, P.build_list_moments(session_id), timeout)
         if pt is None:
             raise RequestTimeout("LIST_MOMENTS")
-        return P.parse_list_moments(pt)
+        return P.parse_list_moments(pt, session_id)
+
+    def moments(self, session_id: int, timeout: float = 20.0) -> list[P.MomentInfo]:
+        """Typed convenience over :meth:`list_moments`."""
+        return self.list_moments(session_id, timeout)["moments"]
 
     def delete_moments(self, session_id: int, moment_ids) -> bool:
         pt = self.request(C.RT_DELETE_MOMENTS, P.build_delete_moments(session_id, list(moment_ids)))
@@ -354,6 +504,8 @@ class Camera:
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace").strip()
             raise CameraError(f"HTTP {e.code} on {path}: {detail}") from None
+        except (urllib.error.URLError, OSError) as e:
+            raise CameraError(f"HTTP request to {path} failed: {e}") from None
 
     def fetch_moment_http(
         self,
@@ -374,7 +526,9 @@ class Camera:
     # ------------------------------------------------------------------ lifecycle
 
     def close(self) -> None:
+        self.stop_keepalive()
         self.transport.close()
+        self.sess = None
 
 
 def extract_jpeg(data: bytes) -> bytes | None:

@@ -151,3 +151,41 @@ def test_state_bundle_parsing():
     assert st.as_dict()["charge_state_name"] == "CHARGING"
     assert st.as_dict()["wifi_state_name"] == "READY"
     assert len(st.raw) == 6
+
+
+def test_live_list_moments_metadata():
+    got = P.parse_list_moments(LIVE_LIST_MOMENTS, session_id=SID)
+    assert got["timestamps_ms"] == [
+        1789825818164,
+        1789825834917,
+        1789825804669,
+        1789826017075,
+        1789825858297,
+        1789825880544,
+    ]
+    assert [round(s, 4) for s in got["scores"]] == [0.0826, 0.0773, 0.0719, 0.0709, 0.0549, 0.0532]
+    assert got["scores"] == sorted(got["scores"], reverse=True)  # best first
+    m = got["moments"]
+    assert len(m) == 6 and m[0].session_id == SID and m[0].moment_id == 2
+    assert m[0].datetime.isoformat() == "2026-09-19T13:50:18.164000+00:00"
+    assert m[0].triage is None
+    empty = P.parse_list_moments(LIVE_LIST_EMPTY)
+    assert empty["moments"] == [] and empty["scores"] == []
+
+
+def test_session_start_time():
+    assert P.session_start_time(SID).isoformat() == "2026-09-19T13:49:59.491786+00:00"
+    assert P.session_start_time(946685369270784000) is None  # camera clock at 2000-01-01, not synced
+    assert P.session_start_time(0) is None
+
+
+def test_update_from_returns_changes():
+    from openclips.pb import pb_bytes, pb_uint
+
+    st = P.CameraState()
+    pt = pb_bytes(1, pb_bytes(9, pb_uint(1, 1))) + pb_bytes(1, pb_bytes(2, pb_uint(1, 4)))
+    ch = st.update_from(pt)
+    assert ch["cover_open"] == (None, True) and ch["system_state"] == (None, 4)
+    assert [e["name"] for e in ch["_entries"]] == ["COVER", "ACTIVITY"]
+    assert st.update_from(pt) == {"_entries": ch["_entries"]}  # no value changes second time
+    assert st.update_from(pb_uint(40, 1)) == {}
