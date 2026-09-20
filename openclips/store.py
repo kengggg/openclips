@@ -3,7 +3,7 @@
 Layout of ``$XDG_CONFIG_HOME/openclips/pairings.json``::
 
     {
-      "host_key_pem": "-----BEGIN PRIVATE KEY-----...",
+      "host_key_pem": "<PEM>",
       "cameras": {
         "AA:BB:CC:DD:EE:FF": {
           "pairing_key": "<64 hex>",
