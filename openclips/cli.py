@@ -45,6 +45,14 @@ EXIT_INTERRUPT = 130
 logger = logging.getLogger("openclips.cli")
 
 
+class CliExit(Exception):
+    """Abort a command with a table exit code and a stderr message."""
+
+    def __init__(self, code: int, message: str):
+        self.code = code
+        super().__init__(message)
+
+
 def setup_logging(verbose: bool) -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%H:%M:%S"))
@@ -77,10 +85,10 @@ def resolve_address(args, store: PairingStore) -> str | None:
 def connect_paired(args, store: PairingStore, keepalive: bool = True) -> ConnectionManager:
     """Connect and resume the secure session with the stored key."""
     if not resolve_address(args, store):
-        raise SystemExit("no camera address: pass --address or pair first")
+        raise CliExit(EXIT_USAGE, "no camera address: pass --address or pair first")
     pairing = store.get(args.address)
     if pairing is None:
-        raise SystemExit(f"{args.address} is not paired. Run: openclips pair {args.address}")
+        raise CliExit(EXIT_CAMERA, f"{args.address} is not paired. Run: openclips pair {args.address}")
     mgr = ConnectionManager(
         args.address,
         pairing=pairing,
@@ -117,11 +125,11 @@ def fmt_time(m: P.MomentInfo) -> str:
 def cmd_scan(args) -> int:
     try:
         from .scan import scan
+
+        hits = scan(args.timeout)
     except ImportError:
         print("error: pip install 'openclips[ble]' to scan", file=sys.stderr)
         return EXIT_CAMERA
-
-    hits = scan(args.timeout)
     rows = [
         {
             "address": h.address,
@@ -567,6 +575,9 @@ def main(argv=None) -> int:
     setup_logging(args.verbose)
     try:
         return args.func(args)
+    except CliExit as e:
+        print(f"error: {e}", file=sys.stderr)
+        return e.code
     except (PairingKeyMismatch, CameraAsleep, ConnectionLost) as e:
         print(f"error: {e}", file=sys.stderr)
         return EXIT_CAMERA
