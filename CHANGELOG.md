@@ -66,6 +66,11 @@ not just the CLI. See `docs/LIBRARY.md`.
 - ConnectionManager closes the camera/transport on any setup failure, not
   only CameraError. Async event consumers get a copied CameraState.
   Btgatt process teardown no longer blocks forever on waitpid.
+- NmcliWifi restores the prior connection even if deleting the camera
+  profile fails. `--keep-wifi` keeps the SoftAP only after a successful
+  sync; failures still restore the previous network. Camera profiles are
+  owned by UUID (`openclips-*`) and nmcli errors no longer include
+  passphrases or command lines.
 
 ## [0.1.0] - 2026-09-20
 

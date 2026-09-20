@@ -147,6 +147,13 @@ when listing a session failed, a transfer/save failed, cleanup failed, or
 the run was cancelled. CLI `sync` returns nonzero for partial and failed
 runs (exit 6 when some files saved, 3 when none did).
 
+`--keep-wifi` / `Syncer(keep_network=True)` keeps the camera SoftAP only
+after a fully successful download. Cancellation and failures still leave
+the camera network and restore the prior connection. Retention is best
+effort: closing BLE or camera firmware timeouts can still end the SoftAP.
+Camera NetworkManager profiles are named `openclips-*` and deleted by UUID
+so an unrelated SSID-named connection is never removed.
+
 `Catalog` (`<out>/.openclips-catalog.json`) records every download with
 timestamp, score, size and resolution, so the plan skips what you already
 have and your gallery can list moments without touching the files. Old

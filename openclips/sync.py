@@ -143,6 +143,7 @@ class Syncer:
         http_timeout: float = 30.0,
         http_retries: int = 2,
         http_retry_backoff: float = 0.2,
+        keep_network: bool = False,
     ):
         self.camera = camera
         self.out_dir = Path(out_dir).expanduser()
@@ -156,6 +157,7 @@ class Syncer:
         self.http_timeout = http_timeout
         self.http_retries = max(0, int(http_retries))
         self.http_retry_backoff = max(0.0, float(http_retry_backoff))
+        self.keep_network = keep_network
         self._cancel = threading.Event()
 
     # ------------------------------------------------------------------ helpers
@@ -327,6 +329,7 @@ class Syncer:
             if creds is None:
                 raise WifiError("camera did not return SoftAP credentials")
             result.credentials = creds
+            joined = False
             try:
                 if self.hold_preview:
                     try:
@@ -338,9 +341,8 @@ class Syncer:
                     self._report(STAGE_CANCELLED, total=plan.total)
                     return result
                 self._report(STAGE_WIFI_JOIN, credentials=creds, message="joining camera network")
-                joined = False
                 try:
-                    joined = self.wifi.join(creds)
+                    joined = bool(self.wifi.join(creds))
                 except Exception as e:
                     raise WifiError("could not join camera network") from e
                 if not joined:
@@ -348,7 +350,11 @@ class Syncer:
                 self._report(STAGE_WIFI_JOINED, credentials=creds)
                 self._download_all(plan, result, creds)
             finally:
-                self._cleanup_wifi(cam, result)
+                keep = self.keep_network and result.ok and not result.cancelled and joined
+                if keep:
+                    logger.info("keeping camera network (best effort; the SoftAP may still end)")
+                else:
+                    self._cleanup_wifi(cam, result)
         self._report(
             STAGE_CANCELLED if result.cancelled else STAGE_DONE, total=plan.total, index=len(result.downloaded)
         )
@@ -366,6 +372,9 @@ class Syncer:
         except CameraError as e:
             result.cleanup_errors.append(f"cancel_wifi:{type(e).__name__}")
             logger.debug("cancel_wifi failed: %s", e)
+        extra = getattr(self.wifi, "leave_errors", None)
+        if extra:
+            result.cleanup_errors.extend(extra)
 
     def _fetch(self, item: SyncItem, creds: WifiCredentials) -> bytes:
         attempts = self.http_retries + 1

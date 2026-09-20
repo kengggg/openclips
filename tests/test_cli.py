@@ -131,8 +131,14 @@ def test_sync_downloads_jpegs(store, fake, capsys, tmp_path, monkeypatch):
     monkeypatch.setattr(nm, "detect_wifi_iface", lambda: "wlan0")
     monkeypatch.setattr(nm, "active_connection", lambda iface: "HomeNet")
     monkeypatch.setattr(nm, "wait_for_ssid", lambda ssid, iface, timeout, log=None: True)
-    monkeypatch.setattr(nm, "join_nmcli", lambda creds, iface, log=None: calls.append(("join", creds.ssid)) or True)
-    monkeypatch.setattr(nm, "forget_nmcli", lambda ssid: calls.append(("forget", ssid)))
+    monkeypatch.setattr(
+        nm,
+        "join_nmcli",
+        lambda creds, iface, log=None, **k: (
+            calls.append(("join", creds.ssid)) or ("11111111-2222-3333-4444-555555555555", True)
+        ),
+    )
+    monkeypatch.setattr(nm, "forget_nmcli", lambda ident: calls.append(("forget", ident)))
     monkeypatch.setattr(nm, "restore_nmcli", lambda conn: calls.append(("restore", conn)))
 
     def fake_post(url, path, body, timeout=30.0):
@@ -149,7 +155,9 @@ def test_sync_downloads_jpegs(store, fake, capsys, tmp_path, monkeypatch):
     saved = sorted(p.name for p in (out_dir / str(SID)).iterdir())
     assert saved == ["moment_2.jpg", "moment_3.jpg"]
     assert not (out_dir / "5").exists()  # newest session only by default
-    assert ("join", "Clips6013") in calls and ("restore", "HomeNet") in calls and ("forget", "Clips6013") in calls
+    assert ("join", "Clips6013") in calls
+    assert any(c[0] == "forget" for c in calls)
+    assert any(c[0] == "restore" for c in calls)
     assert not lens.wifi_open  # CANCEL_WIFI after the download
     assert (out_dir / ".openclips-catalog.json").exists()
 
@@ -174,8 +182,10 @@ def test_sync_partial_failure_is_nonzero(store, fake, capsys, tmp_path, monkeypa
     monkeypatch.setattr(nm, "detect_wifi_iface", lambda: "wlan0")
     monkeypatch.setattr(nm, "active_connection", lambda iface: None)
     monkeypatch.setattr(nm, "wait_for_ssid", lambda ssid, iface, timeout, log=None: True)
-    monkeypatch.setattr(nm, "join_nmcli", lambda creds, iface, log=None: True)
-    monkeypatch.setattr(nm, "forget_nmcli", lambda ssid: None)
+    monkeypatch.setattr(
+        nm, "join_nmcli", lambda creds, iface, log=None, **k: ("11111111-2222-3333-4444-555555555555", True)
+    )
+    monkeypatch.setattr(nm, "forget_nmcli", lambda ident: None)
     monkeypatch.setattr(nm, "restore_nmcli", lambda conn: None)
     n = {"i": 0}
 

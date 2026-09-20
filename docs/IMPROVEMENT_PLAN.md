@@ -311,47 +311,48 @@ add `tests/test_wifi_nmcli.py`, extend sync/CLI tests and library documentation.
 
 Tasks:
 
-- [ ] 04.1 Make nmcli execution return structured success/failure information and
+- [x] 04.1 Make nmcli execution return structured success/failure information and
   map missing executable, timeout, and nonzero exit to safe WifiError messages.
   Never stringify a subprocess exception containing a password-bearing command,
   or print unfiltered stdout/stderr. Keep diagnostic stage/code information.
-- [ ] 04.2 Identify the prior connection by UUID and interface. Parse escaped
+- [x] 04.2 Identify the prior connection by UUID and interface. Parse escaped
   nmcli fields correctly and test names/SSIDs containing separators or backslashes.
   Give created camera profiles unique identities and track ownership; never delete
   a pre-existing unrelated profile merely because its name matches the SSID.
-- [ ] 04.3 Make join/leave state transitions explicit. Remember acquired resources
+- [x] 04.3 Make join/leave state transitions explicit. Remember acquired resources
   as each step succeeds, handle partial join, and make repeated leave harmless.
   Ensure both deletion and restoration are attempted independently, with each
   failure reported. Retain enough state for a retry after partial cleanup failure.
-- [ ] 04.4 Use monotonic scan/join deadlines, cap each subprocess wait by remaining
+- [x] 04.4 Use monotonic scan/join deadlines, cap each subprocess wait by remaining
   budget, and prevent retry sleeps from extending the configured total deadline.
   Apply restrictive permissions to any temporary credential-bearing file and use
   the same private-data assertions for all timeout and retry paths.
-- [ ] 04.5 Define a shared cleanup policy between Syncer and the Wi-Fi adapter.
+- [x] 04.5 Define a shared cleanup policy between Syncer and the Wi-Fi adapter.
   Default: leave owned camera connection, restore prior network, cancel SoftAP.
   On completed success with `--keep-wifi`: retain the camera connection/profile,
   skip prior-network restore, and do not send CANCEL_WIFI. On cancellation or
   failure: perform normal restoration, documenting this exception to retention.
-- [ ] 04.6 Explain that retention is best effort: the command closing its BLE
+- [x] 04.6 Explain that retention is best effort: the command closing its BLE
   session and camera firmware timeouts can still end the SoftAP. Do not imply
   indefinite Wi-Fi availability. Give the retained profile an explicit ownership
   and subsequent-reuse/cleanup policy so repeated runs do not accumulate profiles.
-- [ ] 04.7 Surface cleanup failures in PR 02's result contract without hiding
+- [x] 04.7 Surface cleanup failures in PR 02's result contract without hiding
   completed downloads or masking the primary error. Update help and documentation.
 
 Validation:
 
-- [ ] Mock all subprocess calls. Cover no interface, no prior network, SSID absent,
+- [x] Mock all subprocess calls. Cover no interface, no prior network, SSID absent,
   failed scan, join timeout, retry exhaustion, and multiple-interface selection.
-- [ ] Failure deleting an owned profile still attempts restore; failure restoring
+- [x] Failure deleting an owned profile still attempts restore; failure restoring
   is visible; repeated cleanup cannot delete somebody else's connection.
-- [ ] Escaped names, duplicate profile names, existing camera profiles, and UUID
+- [x] Escaped names, duplicate profile names, existing camera profiles, and UUID
   restoration behave correctly. Retained profiles can be reused or cleaned later.
-- [ ] Test the cleanup-policy matrix for success, partial failure, cancellation,
+- [x] Test the cleanup-policy matrix for success, partial failure, cancellation,
   and join failure with both default and keep-network settings.
-- [ ] Synthetic passphrases never appear in logs, errors, or exception chains.
+- [x] Synthetic passphrases never appear in logs, errors, or exception chains.
 - [ ] Hardware check: join/download/restore and keep-network behavior on a known
   Linux setup. Report only sanitized outcomes, not nmcli dumps or network names.
+  Untested here (no camera / no live NetworkManager join).
 
 Completion: tests verify each policy branch and restoration failures are visible.
 Compatibility: document the corrected `--keep-wifi` semantics and any additive
@@ -523,6 +524,6 @@ Update this table as work is completed; never mark a task done based on a plan.
 | 01 | GitHub PR open (not merged) | [#4](https://github.com/kengggg/openclips/pull/4) `pr-01-correlate-replies-deadlines` | Offline pytest against FakeLens, including correlation, pending bound, monotonic budgets, pairing/resume/notification/heartbeat, bundled field-1 state. `ruff check` / `ruff format --check` clean. Hardware status/sessions/repeated reads: **untested** (no camera). Missing-echo CSC on firmware 1.8 untested; plaintext handshake still field-only as documented. GitHub PRs #1–#3 are Dependabot Actions bumps, unrelated. |
 | 02 | GitHub PR open (not merged) | [#5](https://github.com/kengggg/openclips/pull/5) `pr-02-sync-recovery` | Offline pytest (JPEG fixtures, listing errors, retries, cancel-after-plan, CLI partial exit). Hardware capture/sync recovery: **untested** (no camera). |
 | 03 | GitHub PR open (not merged) | [#6](https://github.com/kengggg/openclips/pull/6) `pr-03-async-lifecycle` | Offline FakeLens/fake scanner/fake Bleak/reap tests. Hardware long-session/reconnect: **untested**. Bleak on macOS/Windows unvalidated. |
-| 04 | Planned | — | Baseline and implementation pending |
+| 04 | GitHub PR open (not merged) | [#7](https://github.com/kengggg/openclips/pull/7) `pr-04-wifi-restore` | Mocked nmcli tests. Hardware join/restore/keep-network: **untested**. |
 | 05 | Planned | — | Baseline and implementation pending |
 | 06 | Planned | — | Baseline and implementation pending |

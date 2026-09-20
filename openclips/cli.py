@@ -357,9 +357,10 @@ def cmd_sync(args) -> int:
         syncer = Syncer(
             cam,
             out_root,
-            wifi=NmcliWifi(iface=args.iface, restore=not args.keep_wifi),
+            wifi=NmcliWifi(iface=args.iface, restore=True),
             on_progress=_progress_printer(args.verbose),
             overwrite=args.overwrite,
+            keep_network=args.keep_wifi,
         )
         plan = syncer.plan(
             session_id=args.session,
@@ -506,7 +507,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--all-sessions", action="store_true", help="every session with moments")
     s.add_argument("--iface", help="Wi-Fi interface (default: auto-detect)")
     s.add_argument("--overwrite", action="store_true")
-    s.add_argument("--keep-wifi", action="store_true", help="stay on the camera network afterwards")
+    s.add_argument(
+        "--keep-wifi",
+        action="store_true",
+        help="on success only, keep the camera SoftAP (best effort). Failures still restore Wi-Fi",
+    )
     s.set_defaults(func=cmd_sync)
 
     sub.add_parser("forget", help="remove a stored pairing").set_defaults(func=cmd_forget)
