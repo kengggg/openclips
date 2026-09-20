@@ -135,7 +135,7 @@ def test_sync_downloads_jpegs(store, fake, capsys, tmp_path, monkeypatch):
         nm,
         "join_nmcli",
         lambda creds, iface, log=None, **k: (
-            calls.append(("join", creds.ssid)) or "11111111-2222-3333-4444-555555555555"
+            calls.append(("join", creds.ssid)) or ("11111111-2222-3333-4444-555555555555", True)
         ),
     )
     monkeypatch.setattr(nm, "forget_nmcli", lambda ident: calls.append(("forget", ident)))
@@ -182,7 +182,9 @@ def test_sync_partial_failure_is_nonzero(store, fake, capsys, tmp_path, monkeypa
     monkeypatch.setattr(nm, "detect_wifi_iface", lambda: "wlan0")
     monkeypatch.setattr(nm, "active_connection", lambda iface: None)
     monkeypatch.setattr(nm, "wait_for_ssid", lambda ssid, iface, timeout, log=None: True)
-    monkeypatch.setattr(nm, "join_nmcli", lambda creds, iface, log=None, **k: "11111111-2222-3333-4444-555555555555")
+    monkeypatch.setattr(
+        nm, "join_nmcli", lambda creds, iface, log=None, **k: ("11111111-2222-3333-4444-555555555555", True)
+    )
     monkeypatch.setattr(nm, "forget_nmcli", lambda ident: None)
     monkeypatch.setattr(nm, "restore_nmcli", lambda conn: None)
     n = {"i": 0}
