@@ -73,6 +73,51 @@ Field 1 of a `Response` may repeat a state bundle (see *State
 notifications*). The CSC response always carries the full bundle; later
 Responses carry single async updates with no request field at all.
 
+### Reply correlation
+
+Ordinary encrypted RPCs complete only when the decrypted reply has **both**
+the expected response field (`request type + 1`) and a sequence echo in
+field 40 equal to the request's field 38. A matching field with a different
+echo, a matching echo with the wrong field, a missing echo, a duplicate of
+an already-consumed reply, or a malformed body must not complete that
+request. There is no field-only fallback for encrypted RPCs.
+
+Unsolicited state notifications (field 1) and keepalive replies
+(`Response {4: {1: 1}, 40: seq}`) stay on their own paths. They may be
+interleaved with, or bundled on, an RPC reply; they still update state and
+must still be decrypted so AES-EAX counters stay aligned. A valid matching
+reply after them is still the request's result.
+
+Replies that belonged to a completed or timed-out request are stale and
+must not be reused. A host should bound any pending-response buffer and
+clear it on session reset or close. Diagnostics for discarded replies
+should name response types and counts only, never payloads.
+
+Plaintext handshake messages (`PUBLIC_QUERY`, `INITIATE_PAIRING`, `ISC`)
+are matched on response field only: each type appears once in the
+pair/resume sequence. The CSC response is encrypted and uses the same
+field-plus-echo rule as other encrypted RPCs. Missing-echo CSC behaviour
+on live firmware 1.8 is untested in this change; FakeLens and the envelope
+above include field 40.
+
+### Handshake and elapsed-time budgets
+
+Elapsed waits (encrypted reads, `poll`, `pair`, `resume`, `wait_for`, and
+nested indication reads) use a monotonic clock. Wall-clock time is only
+for camera clock synchronization (`PRIVATE_QUERY`) and timestamps. A zero
+or nearly expired remaining budget must not start another full-duration
+read (hosts commonly cap a single indication wait at 0.5 s encrypted /
+1.0 s plaintext).
+
+Handshake phases have **separate** budgets:
+
+| Call | Phase | Budget |
+|---|---|---|
+| `pair(timeout=30)` | `PUBLIC_QUERY` | 6 s of its own, not taken from `timeout` |
+| `pair(timeout=30)` | `INITIATE_PAIRING` | `timeout` (default 30 s) |
+| `resume(timeout=15)` | `ISC` | `timeout` (default 15 s) |
+| `resume(timeout=15)` | `CSC` | a fresh `timeout` (default 15 s), not the remainder of ISC |
+
 ### RPCs a replacement client needs
 
 | Type | Name | Inner request | Notes |

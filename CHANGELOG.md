@@ -35,6 +35,23 @@ not just the CLI. See `docs/LIBRARY.md`.
   `timestamps_ms`, `scores`, `triage` and `moments`.
 - `Camera.close()` stops the keepalive thread and clears the session.
 - Exceptions moved to `openclips.errors` (still importable from `openclips`).
+- Encrypted RPCs complete only on a matching response field **and** sequence
+  echo. Missing echoes are rejected; there is no field-only fallback.
+  `request()` still returns `None` on timeout. Elapsed waits use a monotonic
+  clock and pass remaining budget into nested reads. Wall-clock time remains
+  only for `PRIVATE_QUERY` / timestamps. Handshake phases keep separate
+  budgets (`pair`: 6 s `PUBLIC_QUERY` then `timeout` for pairing; `resume`:
+  `timeout` for ISC and a fresh `timeout` for CSC). Plaintext handshake
+  replies still match on response field only.
+
+### Fixed
+- A delayed or poll-buffered reply for an older sequence can no longer
+  complete a later request of the same type. Pending stray replies are
+  bounded and cleared on session reset or close. Discarded-reply diagnostics
+  report types and counts, not payloads.
+- A field-1 state bundle on the same encrypted frame as a matching RPC
+  updates `Camera.state` and emits events; the RPC is still returned, not
+  absorbed. `resume()` remains the CSC owner.
 
 ## [0.1.0] - 2026-09-20
 
